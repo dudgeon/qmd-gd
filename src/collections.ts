@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, dirname, resolve } from "path";
-import { homedir } from "os";
+import { qmdHomedir } from "./paths.js";
 import YAML from "yaml";
 
 // ============================================================================
@@ -118,7 +118,7 @@ function getConfigDir(): string {
   if (process.env.XDG_CONFIG_HOME) {
     return join(process.env.XDG_CONFIG_HOME, "qmd");
   }
-  return join(homedir(), ".config", "qmd");
+  return join(qmdHomedir(), ".config", "qmd");
 }
 
 function getConfigFilePath(): string {
