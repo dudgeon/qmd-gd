@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# RUN THIS YOURSELF (the user), in your own terminal — it makes outbound network
+# requests (npm registry, HuggingFace, github.com). The Claude agent must NOT run it:
+# in this environment the agent may reach only capitalone.com / github.com; the user
+# reaches every other domain. The agent hands you this script and reads back your output.
+#
 # preflight-deps.sh — test every external service qmd-gd depends on, honoring
 # internal-mirror / private-registry overrides. For each service the EFFECTIVE
 # endpoint is the user-configured value if set, else the public default; we test

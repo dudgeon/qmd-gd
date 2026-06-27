@@ -85,7 +85,8 @@ elif [[ -n "${QMD_EMBED_MODEL:-}" && -f "${QMD_EMBED_MODEL:-}" ]]; then
   ok "QMD_EMBED_MODEL points at a local file ($QMD_EMBED_MODEL) — no download needed."
 else
   todo "Embedding model not present (~333MB) — downloads on first 'qmd embed' / 'qmd pull'."
-  todo "Test the download dependency first:  bash skills/qmd-setup/scripts/preflight-deps.sh"
+  todo "Test the download dependency first (USER runs this; it makes network calls):"
+  todo "    bash skills/qmd-setup/scripts/preflight-deps.sh"
 fi
 
 # --- Scheduled refresh (Duo) ------------------------------------------------

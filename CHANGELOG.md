@@ -30,6 +30,11 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   retrieve → rank candidates yourself, optionally via a Task-tool subagent) and added
   a manual-invoke **`qmd-setup`** skill that sequences first-time install (build/link,
   `qmd skill install --global`, add collections, index, embed, schedule, verify).
+- Hardened the `qmd-setup` skill for restricted-egress networks: the agent must never
+  contact an external domain (only `capitalone.com`/`github.com` are reachable by the
+  agent). The network preflight (`preflight-deps.sh`, which `curl`s npm/HuggingFace) is
+  now explicitly **user-run** — the agent hands it over and reads back the pasted output.
+  The local read-only probe (`qmd-setup-context.sh`) stays agent-runnable (no network).
 - Added `docs/adr/` recording the four architecture decisions.
 
 ### Removed

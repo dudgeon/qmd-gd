@@ -6,19 +6,30 @@ disable-model-invocation: true
 
 # qmd-setup
 
-Guide a (possibly non-technical) user through standing up qmd-gd end to end. This
-skill **prints the commands for the user to run** for anything that mutates state
-(indexing, embedding, installing). It runs only read-only checks itself.
+Guide a (possibly non-technical) user through standing up qmd-gd end to end.
 
-**Never auto-run** `qmd collection add`, `qmd update`, or `qmd embed`. Present the
-exact command, explain what it does, and let the user run it. Confirm completion
-before moving to the next step.
+**Two hard rules for the agent running this skill:**
+
+1. **Never mutate state for the user.** Anything that installs, indexes, embeds, or
+   downloads — `npm install`, `qmd skill install`, `qmd collection add`, `qmd update`,
+   `qmd embed`, `qmd pull` — is **printed for the user to run**, never run by the agent.
+   Present the exact command, explain it, and confirm completion before the next step.
+
+2. **Never contact an external network domain.** In this environment the agent may reach
+   only `capitalone.com` and `github.com`; the user reaches everything else from their own
+   terminal. So the agent must **not** run `curl`/`wget`, `npm install`, `qmd pull`, or the
+   **preflight script** — anything that touches the npm registry, HuggingFace, or prebuilt
+   hosts. Hand those commands to the user and read back what they paste.
+
+The agent may itself run only **local, read-only** checks — chiefly `qmd-setup-context.sh`,
+which touches nothing on the network.
 
 ## Process
 
-### 0. Probe current state (read-only)
+### 0. Probe current state (read-only, local-only — safe for the agent to run)
 
-Run the context script and read its `[todo]` items:
+This probe touches **nothing on the network** (git, `command -v`, local SQLite reads,
+a cache-dir `ls`), so the agent may run it directly and read its `[todo]` items:
 
 ```bash
 bash skills/qmd-setup/scripts/qmd-setup-context.sh
@@ -29,21 +40,25 @@ copy), whether the `qmd` CLI is on PATH, whether the skill is installed for
 Claude, what's indexed, and whether a Duo refresh job exists. Walk the user
 through the `[todo]` items in order. Skip any step already `[ok]`.
 
-### 0.5. Preflight external services (do this before installing)
+### 0.5. Preflight external services — **the user runs this, not the agent**
 
 qmd-gd reaches three external services: the **npm registry** (JS deps + the sqlite-vec
 platform packages), **HuggingFace** (the embedding model), and **GitHub release hosts**
 (native prebuilts for node-llama-cpp / better-sqlite3). On a locked-down corporate network
 any of these may be proxied through an internal mirror — or blocked. Test them first so a
-blocked dependency surfaces here, not as a confusing failure mid-install:
+blocked dependency surfaces here, not as a confusing failure mid-install.
+
+The preflight script `curl`s those endpoints, so by **rule 2 above the agent must not run
+it.** Give the user this command to run in their own terminal and ask them to paste back the
+output:
 
 ```bash
-bash skills/qmd-setup/scripts/preflight-deps.sh   # exits non-zero if any service fails
+bash skills/qmd-setup/scripts/preflight-deps.sh   # USER runs this; exits non-zero if any service fails
 ```
 
-For each service it tests the **effective endpoint** — your configured internal value if
-set, else the public default — and on failure prints the exact knob to set plus a repro
-command.
+For each service it tests the **effective endpoint** — the user's configured internal value
+if set, else the public default — and on failure prints the exact knob to set plus a repro
+command. Read the pasted output to decide what to tell the user next.
 
 **If a service reports `[FAIL]`:** ask the user for that service's internal URL, set it, and
 re-run the preflight until it passes — only then proceed to install. The knobs:
@@ -89,8 +104,9 @@ Verify: `ls -l ~/.claude/skills/qmd` should show a symlink into the checkout.
 
 qmd-gd downloads **only** the embedding model (~333MB, no generative/reranker models)
 from HuggingFace on first use. On a locked-down work network this is the dependency most
-likely to be blocked — the step-0 probe **preflights it** (a HEAD request, no full
-download) and reports `[ok]` / `[todo]`. Check that line before downloading:
+likely to be blocked — the **user-run preflight (step 0.5)** tests reachability, and the
+local step-0 probe reports whether the model is already cached. Check those before the user
+downloads:
 
 - **Reachable / already cached** → just pull it:
 
