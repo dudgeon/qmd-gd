@@ -12,8 +12,5 @@ texts/
 !CLAUDE.md
 !CHANGELOG.md
 !skills/**/*.md
-!finetune/*.md
 !docs/**/*.md
-finetune/outputs/
-finetune/data/train/
 .claude/

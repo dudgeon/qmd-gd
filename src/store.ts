@@ -4510,7 +4510,7 @@ export const INTENT_WEIGHT_SNIPPET = 0.3;
 export const INTENT_WEIGHT_CHUNK = 0.5;
 
 // Common stop words filtered from intent strings before tokenization.
-// Seeded from finetune/reward.py KEY_TERM_STOPWORDS, extended with common
+// Extended with common
 // 2-3 char function words so the length threshold can drop to >1 and let
 // short domain terms (API, SQL, LLM, CPU, CDN, …) survive.
 const INTENT_STOP_WORDS = new Set([
