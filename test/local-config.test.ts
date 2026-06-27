@@ -89,8 +89,9 @@ describe("local .qmd project config", () => {
     expect(output).toContain(`Index: ${realpathSync(localIndex)}`);
     expect(output).toContain("docs (qmd://docs/)");
     expect(output).toContain("Embedding:   local-embed-model");
-    expect(output).toContain("Reranking:   local-rerank-model");
-    expect(output).toContain("Generation:  local-generate-model");
+    // qmd-gd no longer runs generative/reranker models, so status shows only the
+    // embedding model (ADR 0002) — the rerank/generate config entries are ignored.
+    expect(output).not.toContain("Reranking:   local-rerank-model");
     expect(output).not.toContain("env-embed-model");
     expect(existsSync(localIndex)).toBe(true);
     expect(existsSync(join(home, ".cache", "qmd", "index.sqlite"))).toBe(false);

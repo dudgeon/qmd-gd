@@ -1,12 +1,12 @@
-# QMD - Query Markup Documents
+# qmd-gd — Query Markup Documents
 
 An on-device search engine for everything you need to remember. Index your markdown notes, meeting transcripts, documentation, and knowledge bases. Search with keywords or natural language. Ideal for your agentic flows.
 
-QMD combines BM25 full-text search, vector semantic search, and LLM re-ranking—all running locally via node-llama-cpp with GGUF models.
+**qmd-gd** is a fork of [qmd](https://github.com/tobi/qmd) reworked for locked-down environments that forbid MCP servers and local generative-LLM inference. It combines BM25 full-text search and on-device vector semantic search (RRF fusion), running locally via a single **embedding** model. There is **no MCP server** and **no local generative model**: query expansion and reranking are delegated to the calling Claude agent, which authors `lex:/vec:/hyde:` queries and ranks the returned candidates itself. qmd-gd never invokes Claude and never runs `claude -p`. See [`docs/adr/`](docs/adr/) for the rationale.
 
 ![QMD Architecture](assets/qmd-architecture.png)
 
-You can read more about QMD's progress in the [CHANGELOG](CHANGELOG.md).
+You can read more about qmd-gd's progress in the [CHANGELOG](CHANGELOG.md).
 
 ## Quick Start
 
@@ -36,7 +36,7 @@ qmd embed
 # Search across everything
 qmd search "project timeline"           # Fast keyword search
 qmd vsearch "how to deploy"             # Semantic search
-qmd query "quarterly planning process"  # Hybrid + reranking (best quality)
+qmd query "quarterly planning process"  # Hybrid BM25 + vector (RRF); you rank the candidates
 
 # Get a specific document
 qmd get "meetings/2024-01-15.md"
@@ -69,100 +69,34 @@ qmd query "error handling" --all --files --min-score 0.4
 qmd get "docs/api-reference.md" --full
 ```
 
-### MCP Server
+### Using with Claude Code / agents (no MCP)
 
-Although the tool works perfectly fine when you just tell your agent to use it on the command line, it also exposes an MCP (Model Context Protocol) server for tighter integration.
-
-**Tools exposed:**
-- `query` — Search with typed sub-queries (`lex`/`vec`/`hyde`), combined via RRF + reranking
-- `get` — Retrieve a document by path or docid (with fuzzy matching suggestions)
-- `multi_get` — Batch retrieve by glob pattern, comma-separated list, or docids
-- `status` — Index health and collection info
-
-**Claude Desktop configuration** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "qmd": {
-      "command": "qmd",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-**Claude Code** — Install the plugin (recommended):
+qmd-gd has **no MCP server** — the CLI *is* the interface. Your agent runs `qmd` over
+Bash. Install the bundled skill so Claude Code knows the workflow:
 
 ```bash
-claude plugin marketplace add tobi/qmd
-claude plugin install qmd@qmd
+qmd skill install --global   # copies the skill and symlinks ~/.claude/skills/qmd
 ```
 
-Or configure MCP manually in `~/.claude/settings.json`:
+(First time on a machine? Run the `qmd-setup` skill, which sequences build/link →
+skill install → add collections → index → embed → schedule → verify.)
 
-```json
-{
-  "mcpServers": {
-    "qmd": {
-      "command": "qmd",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-#### HTTP Transport
-
-By default, QMD's MCP server uses stdio (launched as a subprocess by each client). For a shared, long-lived server that avoids repeated model loading, use the HTTP transport:
+The skill teaches the agent-driven loop: **author a structured query → retrieve →
+rank the candidates yourself.** qmd-gd does no query expansion or reranking with a
+local model — the agent supplies the `lex:/vec:/hyde:` variants and judges the
+returned candidates (optionally via a Haiku subagent through the Task tool — never
+`claude -p`):
 
 ```sh
-# Foreground (Ctrl-C to stop)
-qmd mcp --http                    # localhost:8181
-qmd mcp --http --port 8080        # custom port
-qmd mcp --http --host 0.0.0.0     # bind all interfaces (e.g. container probes)
+# Author the query yourself; qmd-gd embeds + retrieves + fuses (RRF) and returns candidates.
+qmd query --format json $'intent: what to find and what to avoid\nlex: exact terms titles symbols\nvec: natural-language paraphrase\nhyde: a hypothetical passage that would answer this'
 
-# Background daemon
-qmd mcp --http --daemon           # start, writes PID to ~/.cache/qmd/mcp.pid
-qmd mcp stop                      # stop via PID file
-qmd status                        # shows "MCP: running (PID ...)" when active
+# Then read/rank the candidates and pull the winners:
+qmd get "#abc123:120:40"
 ```
 
-The server binds to `localhost` by default. Pass `--host` (or set the `QMD_HOST`
-environment variable) to override — `--host 0.0.0.0` is useful when the server
-runs in a container and a liveness probe connects from a non-loopback address.
-
-The HTTP server exposes two endpoints:
-- `POST /mcp` — MCP Streamable HTTP (JSON responses, stateless)
-- `GET /health` — liveness check with uptime
-
-LLM models stay loaded in VRAM across requests. Embedding/reranking contexts are disposed after 5 min idle and transparently recreated on the next request (~1s penalty, models remain loaded).
-
-Point any MCP client at `http://localhost:8181/mcp` to connect.
-
-#### MCP Tool Parameters
-
-| Tool | Parameter | Type | Notes |
-|------|-----------|------|-------|
-| `query` | `searches` | array | Typed sub-queries (`lex`/`vec`/`hyde`), 1–10. **Required.** First gets 2x weight. |
-| `query` | `collections` | string[] | Filter by collection names (OR). **Array only** — singular `collection` is silently ignored. |
-| `query` | `intent` | string | Disambiguation context (does not search on its own) |
-| `query` | `limit` | number | Max results (default 10) |
-| `query` | `minScore` | number | Minimum relevance 0–1 (default 0) |
-| `query` | `candidateLimit` | number | Max candidates to rerank (default 40) |
-| `query` | `rerank` | boolean | Run LLM reranking (default **true**); set false for RRF-only |
-| `get` | `file` | string | Path, docid (`#abc123`), or `path:from:count` (e.g. `#abc123:120:40`) |
-| `get` | `fromLine` | number | Start line (1-indexed); overrides the `:from` suffix |
-| `get` | `maxLines` | number | Limit returned lines |
-| `get` | `lineNumbers` | boolean | Prefix lines with numbers (default **true**) |
-| `multi_get` | `pattern` | string | Glob pattern or comma-separated list |
-| `multi_get` | `maxBytes` | number | Skip files larger than N (default 10240) |
-| `multi_get` | `maxLines` | number | Limit lines per file |
-| `multi_get` | `lineNumbers` | boolean | Prefix lines with numbers (default **true**) |
-
-Unknown parameters are silently ignored (not rejected) — double-check names if
-results seem unscoped. The HTTP `/query` and `/search` endpoints return
-`qmd://collection/path` URIs in the `file` field, matching the CLI and MCP output.
+If the local embedding model is unavailable (e.g. a sandbox blocks it at query time),
+fall back to `qmd search` — pure BM25, zero inference.
 
 ### SDK / Library Usage
 
@@ -403,6 +337,13 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 
 ## Architecture
 
+> **qmd-gd note:** the **Query Expansion** and **LLM Re-ranking** stages shown below
+> are **not run** in qmd-gd. The calling agent does both (it authors the typed
+> sub-queries and ranks the returned candidates). qmd-gd runs only the embedding model
+> for retrieval; the SDK's `rerank`/`expandQuery` surface is a no-op kept for
+> compatibility. The pipeline below documents the upstream design. See
+> [`docs/adr/0002`](docs/adr/0002-delegate-generative-steps-to-the-agent.md).
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         QMD Hybrid Search Pipeline                          │
@@ -510,17 +451,18 @@ The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware bl
   brew install sqlite
   ```
 
-### GGUF Models (via node-llama-cpp)
+### GGUF Model (via node-llama-cpp)
 
-QMD uses three local GGUF models (auto-downloaded on first use):
+qmd-gd uses **one** local GGUF model — the embedding model — auto-downloaded on first use:
 
 | Model | Purpose | Size |
 |-------|---------|------|
 | `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~300MB |
-| `qwen3-reranker-0.6b-q8_0` | Re-ranking | ~640MB |
-| `qmd-query-expansion-1.7B-q4_k_m` | Query expansion (fine-tuned) | ~1.1GB |
 
-Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
+It is downloaded from HuggingFace and cached in `~/.cache/qmd/models/`. (Upstream qmd
+also ran a `qwen3-reranker` and a `qmd-query-expansion` model; qmd-gd delegates those
+steps to the calling agent, so they are **never downloaded** — see
+[ADR 0002](docs/adr/0002-delegate-generative-steps-to-the-agent.md).)
 
 ### Custom Embedding Model
 

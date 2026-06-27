@@ -1,7 +1,8 @@
 {
-  "name": "@tobilu/qmd",
+  "name": "qmd-gd",
   "version": "2.6.3",
-  "description": "Query Markup Documents - On-device hybrid search for markdown files with BM25, vector search, and LLM reranking",
+  "description": "Query Markup Documents (qmd-gd fork) - on-device BM25 + vector search for locked-down agent environments; no MCP, no local generative models",
+  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,6 +23,7 @@
     "scripts/check-package-grammars.mjs",
     "scripts/package-smoke.mjs",
     "scripts/test-all.mjs",
+    "docs/adr/",
     "LICENSE",
     "CHANGELOG.md"
   ],
@@ -40,23 +42,18 @@
     "search": "tsx src/cli/qmd.ts search",
     "vsearch": "tsx src/cli/qmd.ts vsearch",
     "rerank": "tsx src/cli/qmd.ts rerank",
-    "inspector": "npx @modelcontextprotocol/inspector tsx src/cli/qmd.ts mcp",
     "release": "./scripts/release.sh",
     "smoke:package-grammars": "node scripts/check-package-grammars.mjs"
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tobi/qmd.git"
+    "url": "git+https://github.com/dudgeon/qmd-gd.git"
   },
-  "homepage": "https://github.com/tobi/qmd#readme",
+  "homepage": "https://github.com/dudgeon/qmd-gd#readme",
   "bugs": {
-    "url": "https://github.com/tobi/qmd/issues"
+    "url": "https://github.com/dudgeon/qmd-gd/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
     "better-sqlite3": "12.10.0",
     "fast-glob": "3.3.3",
     "node-llama-cpp": "3.18.1",
@@ -111,7 +108,6 @@
     "bm25",
     "embeddings",
     "rag",
-    "mcp",
     "reranking",
     "knowledge-base",
     "local-ai",

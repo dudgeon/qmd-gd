@@ -104,11 +104,11 @@ Both forms call the local query expansion model, which generates lex, vec, and h
 
 ## Intent
 
-An optional `intent:` line provides background context to disambiguate ambiguous queries. It steers query expansion, reranking, and snippet extraction but does not search on its own.
+An optional `intent:` line provides background context to disambiguate ambiguous queries. It steers retrieval ranking and snippet extraction but does not search on its own.
 
 - At most one `intent:` line per query document
 - `intent:` cannot appear alone — at least one `lex:`, `vec:`, or `hyde:` line is required
-- Intent is also available via the `--intent` CLI flag or MCP `intent` parameter
+- Intent is also available via the `--intent` CLI flag or the SDK `intent` option
 
 ```
 intent: web page load times and Core Web Vitals
@@ -129,7 +129,7 @@ Without intent, "performance" is ambiguous (web-perf? team health? fitness?). Wi
 
 ## Scoping
 
-Restrict queries to specific collections with `-c` (CLI) or `collections` (MCP/SDK):
+Restrict queries to specific collections with `-c` (CLI) or `collections` (SDK):
 
 ```bash
 # CLI — by collection name (see `qmd collection list`)
@@ -137,44 +137,17 @@ qmd query -c docs "how does auth work"
 qmd query -c docs -c notes $'lex: auth\nvec: authentication flow'
 ```
 
-For MCP / HTTP, pass a plural `collections` array (OR match):
+Via the SDK `search()`, pass a plural `collections` array (OR match):
 
-```json
-{ "searches": [ { "type": "lex", "query": "auth" } ], "collections": ["docs", "notes"] }
+```js
+store.search({ queries: [{ type: "lex", query: "auth" }], collections: ["docs", "notes"] })
 ```
 
 `-c`/`collections` matches by collection name and works from any directory.
 Multiple values are OR-combined. Without scoping, all default-included collections
 are searched; collections marked excluded (`qmd collection exclude <name>`) are
-skipped unless explicitly named. In MCP the parameter is the plural `collections`
+skipped unless explicitly named. The SDK parameter is the plural `collections`
 array — a singular `collection` is silently ignored.
-
-## MCP/HTTP API
-
-The `query` tool (and the REST `/query` endpoint) accept a structured query with a
-`searches` array. There is no `q` string parameter — `searches` is required:
-
-```json
-{
-  "searches": [
-    { "type": "lex", "query": "CAP theorem" },
-    { "type": "vec", "query": "consistency vs availability" }
-  ],
-  "collections": ["docs"],
-  "limit": 10
-}
-```
-
-With intent:
-
-```json
-{
-  "searches": [
-    { "type": "lex", "query": "performance" }
-  ],
-  "intent": "web page load times and Core Web Vitals"
-}
-```
 
 ## CLI
 

@@ -25,10 +25,6 @@ qmd query <query>                 # Search with query expansion + reranking (rec
 qmd search <query>                # Full-text keyword search (BM25, no LLM)
 qmd vsearch <query>               # Vector similarity search (no reranking)
 qmd bench <fixture.json>          # Run search-quality benchmarks
-qmd mcp                           # Start MCP server (stdio transport)
-qmd mcp --http [--port N]         # Start MCP server (HTTP, default port 8181)
-qmd mcp --http --daemon           # Start as background daemon
-qmd mcp stop                      # Stop background MCP daemon
 ```
 
 ## Collection Management

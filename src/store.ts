@@ -4739,7 +4739,7 @@ export async function hybridQuery(
   const collection = options?.collection;
   const explain = options?.explain ?? false;
   const intent = options?.intent;
-  const skipRerank = options?.skipRerank ?? false;
+  const skipRerank = options?.skipRerank ?? true; // qmd-gd: rerank off by default — the agent reranks candidates (ADR 0002)
   const hooks = options?.hooks;
 
   const rankedLists: RankedResult[][] = [];
@@ -4763,12 +4763,14 @@ export async function hybridQuery(
 
   if (hasStrongSignal) hooks?.onStrongSignal?.(topScore);
 
-  // Step 2: Expand query (or skip if strong signal)
+  // Step 2: Query expansion.
+  // qmd-gd disables the local generative expansion model (ADR 0002): the calling
+  // Claude agent authors structured lex:/vec:/hyde: queries instead. The raw query
+  // still seeds FTS (above) and the vector "original" seed (below) via the local
+  // embedding model — no generative inference runs here.
   hooks?.onExpandStart?.();
   const expandStart = Date.now();
-  const expanded = hasStrongSignal
-    ? []
-    : await store.expandQuery(query, undefined, intent);
+  const expanded: ExpandedQuery[] = [];
 
   hooks?.onExpand?.(query, expanded, Date.now() - expandStart);
 
@@ -5053,9 +5055,11 @@ export async function vectorSearchQuery(
   ).get();
   if (!hasVectors) return [];
 
-  // Expand query — filter to vec/hyde only (lex queries target FTS, not vector)
+  // qmd-gd disables generative query expansion (ADR 0002) — the caller supplies
+  // any vec/hyde variants. Only the raw query is embedded (via the local embedding
+  // model) below; no generative inference runs here.
   const expandStart = Date.now();
-  const allExpanded = await store.expandQuery(query, undefined, intent);
+  const allExpanded: ExpandedQuery[] = [];
   const vecExpanded = allExpanded.filter(q => q.type !== 'lex');
   options?.hooks?.onExpand?.(query, vecExpanded, Date.now() - expandStart);
 
@@ -5137,7 +5141,7 @@ export async function structuredSearch(
   const candidateLimit = options?.candidateLimit ?? RERANK_CANDIDATE_LIMIT;
   const explain = options?.explain ?? false;
   const intent = options?.intent;
-  const skipRerank = options?.skipRerank ?? false;
+  const skipRerank = options?.skipRerank ?? true; // qmd-gd: rerank off by default — the agent reranks candidates (ADR 0002)
   const hooks = options?.hooks;
 
   const collections = options?.collections;

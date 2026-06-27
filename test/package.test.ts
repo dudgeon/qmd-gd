@@ -51,11 +51,12 @@ describe("package grammar distribution", () => {
     const qmdSkill = readFileSync(new URL("skills/qmd/SKILL.md", root), "utf8");
     expect(qmdSkill).toContain("# QMD - Query Markdown Documents");
     expect(qmdSkill).toContain("## How search works");
-    expect(qmdSkill).toContain("## MCP Tool: `query`");
+    expect(qmdSkill).toContain("## Rank the candidates yourself");
+    expect(qmdSkill).not.toContain("## MCP Tool");
     expect(qmdSkill).not.toContain("This file is a discovery stub");
 
     const firstSixtyLines = qmdSkill.split(/\r?\n/).slice(0, 60).join("\n");
-    expect(firstSixtyLines).toContain("Search for candidate documents");
+    expect(firstSixtyLines).toContain("author a structured query");
     expect(firstSixtyLines).toContain("qmd search");
     expect(firstSixtyLines).toContain('qmd multi-get "#abc123,#def432"');
     expect(firstSixtyLines).toContain("Retrieved:");

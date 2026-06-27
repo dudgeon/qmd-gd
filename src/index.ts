@@ -2,7 +2,7 @@
  * QMD SDK - Library mode for programmatic access to QMD search and indexing.
  *
  * Usage:
- *   import { createStore } from '@tobilu/qmd'
+ *   import { createStore } from 'qmd-gd'
  *
  *   const store = await createStore({
  *     dbPath: './my-index.sqlite',
@@ -148,13 +148,13 @@ export type UpdateResult = {
  * Options for the unified search() method.
  */
 export interface SearchOptions {
-  /** Simple query string — will be auto-expanded via LLM */
+  /** Simple query string — seeds BM25 + vector retrieval directly (no generative expansion in qmd-gd) */
   query?: string;
-  /** Pre-expanded queries (from expandQuery) — skips auto-expansion */
+  /** Typed sub-queries the caller authored (lex/vec/hyde) — the agent's own query expansion */
   queries?: ExpandedQuery[];
-  /** Domain intent hint — steers expansion and reranking */
+  /** Domain intent hint — passed through to retrieval ranking */
   intent?: string;
-  /** Rerank results using LLM (default: true) */
+  /** No-op in qmd-gd (kept for API compatibility) — reranking is done by the calling agent (ADR 0002) */
   rerank?: boolean;
   /** Filter to a specific collection */
   collection?: string;
@@ -397,7 +397,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         ...(opts.collection ? [opts.collection] : []),
         ...(opts.collections ?? []),
       ];
-      const skipRerank = opts.rerank === false;
+      const skipRerank = true; // qmd-gd: reranking is delegated to the calling agent (ADR 0002); the `rerank` option is a no-op
 
       if (opts.queries) {
         // Pre-expanded queries — use structuredSearch
@@ -427,7 +427,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     },
     searchLex: async (q, opts) => internal.searchFTS(q, opts?.limit, opts?.collection),
     searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection),
-    expandQuery: async (q, opts) => internal.expandQuery(q, undefined, opts?.intent),
+    expandQuery: async () => [], // qmd-gd: generative query expansion removed (ADR 0002); the calling agent authors structured lex:/vec:/hyde: queries
     get: async (pathOrDocid, opts) => internal.findDocument(pathOrDocid, opts),
     getDocumentBody: async (pathOrDocid, opts) => {
       const result = internal.findDocument(pathOrDocid, { includeBody: false });

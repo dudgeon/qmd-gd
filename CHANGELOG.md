@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+**qmd-gd fork.** Reworked for locked-down environments that forbid MCP servers and
+local generative-LLM inference. qmd-gd is now a retrieval-only engine: it runs the
+local **embedding** model for BM25 + vector search and returns RRF-fused candidates.
+Query expansion and reranking are delegated to the calling Claude agent (which
+authors `lex:/vec:/hyde:` queries and ranks the candidates) — qmd never invokes
+Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this.
+
+### Changes
+
+- **Removed the MCP server.** `qmd mcp` (stdio + HTTP) and the
+  `@modelcontextprotocol/sdk` dependency are gone; the CLI plus the bundled skill are
+  the only interface. (ADR 0003)
+- **Removed local generative inference.** The query-expansion (1.7B) and reranker
+  (0.6B) models are no longer run in any default path — not in `qmd query`, `qmd
+  vsearch`, or the SDK. First-run downloads drop from ~2.2 GB to ~350 MB (embedding
+  model only). `--no-rerank` is kept as a no-op alias. (ADR 0002)
+- **Embeddings stay local** on the default model — the one inference step that can't
+  be delegated to the agent. (ADR 0001)
+- `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
+- Rewrote the `qmd` skill around the agent-driven loop (author structured query →
+  retrieve → rank candidates yourself, optionally via a Task-tool subagent) and added
+  a manual-invoke **`qmd-setup`** skill that sequences first-time install (build/link,
+  `qmd skill install --global`, add collections, index, embed, schedule, verify).
+- Added `docs/adr/` recording the four architecture decisions.
+
+### Notes
+
+- Scheduled index refresh is user-configured (cron), never auto-run by Claude, and runs
+  via Duo's scheduler as a shell job (`qmd update && qmd embed`) — managed (run/pause/
+  resume/edit) natively in Duo's Home view. qmd-gd ships no scheduler of its own. (ADR 0004)
+
 ## [2.6.3] - 2026-06-24
 
 ### Added

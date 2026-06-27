@@ -153,12 +153,15 @@ const BACKENDS: Backend[] = [
     },
   },
   {
+    // qmd-gd does not run a local reranker (ADR 0002); "full" now mirrors the
+    // RRF-fused hybrid path (rerank is a no-op) and stands in for the candidate
+    // set an agent would rerank itself.
     name: "full",
     run: async (store, query, limit, collection) => {
       const structured = parseStructuredQuery(query.query);
       const results = structured
-        ? await store.search({ queries: structured.searches, intent: structured.intent, limit, collection, rerank: true })
-        : await store.search({ query: query.query, limit, collection, rerank: true });
+        ? await store.search({ queries: structured.searches, intent: structured.intent, limit, collection, rerank: false })
+        : await store.search({ query: query.query, limit, collection, rerank: false });
       return results.map((r: HybridQueryResult) => r.file);
     },
   },

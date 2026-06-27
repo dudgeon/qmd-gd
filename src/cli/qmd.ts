@@ -492,22 +492,6 @@ async function showStatus(): Promise<void> {
   console.log(`${c.bold}QMD Status${c.reset}\n`);
   console.log(`Index: ${dbPath}`);
   console.log(`Size:  ${formatBytes(indexSize)}`);
-
-  // MCP daemon status (check PID file liveness)
-  const mcpCacheDir = process.env.XDG_CACHE_HOME
-    ? resolve(process.env.XDG_CACHE_HOME, "qmd")
-    : resolve(homedir(), ".cache", "qmd");
-  const mcpPidPath = resolve(mcpCacheDir, "mcp.pid");
-  if (existsSync(mcpPidPath)) {
-    const mcpPid = parseInt(readFileSync(mcpPidPath, "utf-8").trim());
-    try {
-      process.kill(mcpPid, 0);
-      console.log(`MCP:   ${c.green}running${c.reset} (PID ${mcpPid})`);
-    } catch {
-      unlinkSync(mcpPidPath);
-      // Stale PID file cleaned up silently
-    }
-  }
   console.log("");
 
   console.log(`${c.bold}Documents${c.reset}`);
@@ -613,8 +597,7 @@ async function showStatus(): Promise<void> {
     const activeModels = resolveModelsForCli();
     console.log(`\n${c.bold}Models${c.reset}`);
     console.log(`  Embedding:   ${hfLink(activeModels.embed)}`);
-    console.log(`  Reranking:   ${hfLink(activeModels.rerank)}`);
-    console.log(`  Generation:  ${hfLink(activeModels.generate)}`);
+    console.log(`  (reranking + query expansion are delegated to the calling agent — no local generative models)`);
   }
 
 
@@ -2767,11 +2750,6 @@ function parseCLI() {
       intent: { type: "string" },
       // Chunking options
       "chunk-strategy": { type: "string" },  // "regex" (default) or "auto" (AST for code files)
-      // MCP HTTP transport options
-      http: { type: "boolean" },
-      daemon: { type: "boolean" },
-      port: { type: "string" },
-      host: { type: "string" },
     },
     allowPositionals: true,
     strict: false, // Allow unknown options to pass through
@@ -2833,7 +2811,7 @@ function parseCLI() {
     collection: values.collection as string[] | undefined,
     lineNumbers: !!values["line-numbers"],
     candidateLimit: values["candidate-limit"] ? parseInt(String(values["candidate-limit"]), 10) : undefined,
-    skipRerank: !!values["no-rerank"],
+    skipRerank: true, // qmd-gd: the local reranker is never run; --no-rerank kept as a no-op alias (ADR 0002)
     explain: !!values.explain,
     intent: values.intent as string | undefined,
     chunkStrategy: parseChunkStrategy(values["chunk-strategy"]),
@@ -3036,7 +3014,7 @@ name: qmd
 description: Bootstrap QMD search instructions from the installed qmd CLI. Use when users ask to find notes, retrieve documents, inspect a wiki, or answer from indexed local markdown.
 license: MIT
 compatibility: Requires qmd CLI. Run \`qmd skill show\` for version-matched instructions.
-allowed-tools: Bash(qmd:*), mcp__qmd__*
+allowed-tools: Bash(qmd:*)
 ---
 
 # QMD - Query Markdown Documents
@@ -3265,7 +3243,7 @@ function showHelp(): void {
   console.log("  qmd <command> [options]");
   console.log("");
   console.log("Primary commands:");
-  console.log("  qmd query <query>             - Hybrid search with auto expansion + reranking (recommended)");
+  console.log("  qmd query <query>             - Hybrid BM25 + vector search with RRF fusion (author lex:/vec:/hyde: yourself)");
   console.log("  qmd query 'lex:..\\nvec:...'   - Structured query document (you provide lex/vec/hyde lines)");
   console.log("  qmd search <query>            - Full-text BM25 keywords (no LLM)");
   console.log("  qmd vsearch <query>           - Vector similarity only");
@@ -3273,7 +3251,6 @@ function showHelp(): void {
   console.log("  qmd multi-get <pattern>       - Batch fetch via glob or comma-separated list");
   console.log("  qmd skills list/get/path      - List and retrieve bundled runtime skills");
   console.log("  qmd skill show/install        - Show or install the QMD skill");
-  console.log("  qmd mcp                       - Start the MCP server (stdio transport for AI agents)");
   console.log("  qmd bench <fixture.json>      - Run search quality benchmarks against a fixture file");
   console.log("");
   console.log("Collections & context:");
@@ -3326,12 +3303,10 @@ function showHelp(): void {
   console.log("    - Each typed line must be single-line text with balanced quotes.");
   console.log("");
   console.log("AI agents & integrations:");
-  console.log("  - Run `qmd mcp` to expose the MCP server (stdio) to agents/IDEs.");
   console.log("  - Run `qmd skills get qmd --full` for version-matched agent instructions.");
   console.log("  - `qmd skill install` installs the QMD skill into ./.agents/skills/qmd.");
-  console.log("  - Use `qmd skill install --global` for ~/.agents/skills/qmd.");
+  console.log("  - Use `qmd skill install --global` for ~/.agents/skills/qmd (symlinks into ~/.claude/skills/qmd).");
   console.log("  - `qmd --skill` is kept as an alias for `qmd skill show`.");
-  console.log("  - Advanced: `qmd mcp --http ...` and `qmd mcp --http --daemon` are optional for custom transports.");
   console.log("");
   console.log("Global options:");
   console.log("  --index <name>             - Use a named index (default: index)");
@@ -3343,7 +3318,7 @@ function showHelp(): void {
   console.log("  --min-score <num>          - Minimum similarity score");
   console.log("  --full                     - Output full document instead of snippet");
   console.log("  -C, --candidate-limit <n>  - Max candidates to rerank (default 40, lower = faster)");
-  console.log("  --no-rerank                - Skip LLM reranking (use RRF scores only, much faster on CPU)");
+  console.log("  --no-rerank                - No-op (kept for compatibility; qmd-gd never runs a local reranker — the agent reranks)");
   console.log("  --no-gpu                   - Force CPU mode for llama.cpp operations (same as QMD_FORCE_CPU=1)");
   console.log("  --line-numbers             - Include line numbers (search; get/multi-get are on by default)");
   console.log("  --no-line-numbers          - Disable line numbers for get/multi-get");
@@ -3485,7 +3460,7 @@ function collectEnvironmentOverrides(activeModels: { embed: string; generate: st
   add("INDEX_PATH", "overrides the SQLite index path; QMD reads/writes a different database");
   add("QMD_CONFIG_DIR", "overrides the QMD config directory and takes precedence over XDG_CONFIG_HOME");
   add("XDG_CONFIG_HOME", "moves QMD config to $XDG_CONFIG_HOME/qmd when QMD_CONFIG_DIR is not set");
-  add("XDG_CACHE_HOME", "moves the default index cache, model cache, and MCP daemon PID files");
+  add("XDG_CACHE_HOME", "moves the default index cache and model cache");
   addModel("QMD_EMBED_MODEL", "embed", activeModels.embed);
   addModel("QMD_GENERATE_MODEL", "generate", activeModels.generate);
   addModel("QMD_RERANK_MODEL", "rerank", activeModels.rerank);
@@ -3548,10 +3523,10 @@ function checkEnvironmentOverrides(activeModels: { embed: string; generate: stri
 }
 
 function checkModelDefaults(activeModels: { embed: string; generate: string; rerank: string }, configModels: ModelsConfig = {}): void {
+  // qmd-gd only runs the local embedding model; generation/reranking are delegated
+  // to the calling agent (ADR 0002), so they are not checked here.
   const checks = [
     { role: "embedding", key: "embed", active: activeModels.embed, configured: configModels.embed, defaultModel: DEFAULT_EMBED_MODEL, envName: "QMD_EMBED_MODEL", envValue: process.env.QMD_EMBED_MODEL },
-    { role: "generation", key: "generate", active: activeModels.generate, configured: configModels.generate, defaultModel: DEFAULT_QUERY_MODEL, envName: "QMD_GENERATE_MODEL", envValue: process.env.QMD_GENERATE_MODEL },
-    { role: "reranking", key: "rerank", active: activeModels.rerank, configured: configModels.rerank, defaultModel: DEFAULT_RERANK_MODEL, envName: "QMD_RERANK_MODEL", envValue: process.env.QMD_RERANK_MODEL },
   ] as const;
 
   const notes: string[] = [];
@@ -3577,8 +3552,6 @@ function checkModelDefaults(activeModels: { embed: string; generate: string; rer
 function checkModelCache(activeModels: { embed: string; generate: string; rerank: string }, nextSteps: string[]): void {
   const models = [
     ["embedding", activeModels.embed],
-    ["generation", activeModels.generate],
-    ["reranking", activeModels.rerank],
   ] as const;
   const unique = new Map<string, string[]>();
   for (const [role, model] of models) {
@@ -3614,7 +3587,7 @@ function checkModelCache(activeModels: { embed: string; generate: string; rerank
   if (invalid.length > 0) {
     nextSteps.push("Run `qmd pull --refresh` to replace invalid cached model files, or delete the listed file and rerun `qmd pull`.");
   } else {
-    nextSteps.push("Run `qmd pull` to download missing embedding/generation/reranking models before `qmd embed` or `qmd query`.");
+    nextSteps.push("Run `qmd pull` to download the missing embedding model before `qmd embed` or `qmd query`.");
   }
 }
 
@@ -4322,11 +4295,9 @@ if (isMain) {
     case "pull": {
       const refresh = cli.values.refresh === undefined ? false : Boolean(cli.values.refresh);
       const activeModels = resolveModelsForCli();
-      const models = [
-        activeModels.embed,
-        activeModels.generate,
-        activeModels.rerank,
-      ];
+      // qmd-gd only uses the local embedding model; the generative expansion and
+      // reranker models are no longer run (ADR 0002), so don't download them.
+      const models = [activeModels.embed];
       console.log(`${c.bold}Pulling models${c.reset}`);
       const results = await pullModels(models, {
         refresh,
@@ -4387,98 +4358,6 @@ if (isMain) {
         dbPath: getDbPath(),
         configPath: configExists() ? getConfigPath() : undefined,
       });
-      break;
-    }
-
-    case "mcp": {
-      const sub = cli.args[0]; // stop | status | undefined
-
-      // Cache dir for PID/log files — same dir as the index
-      const cacheDir = process.env.XDG_CACHE_HOME
-        ? resolve(process.env.XDG_CACHE_HOME, "qmd")
-        : resolve(homedir(), ".cache", "qmd");
-      const pidPath = resolve(cacheDir, "mcp.pid");
-
-      // Subcommands take priority over flags
-      if (sub === "stop") {
-        if (!existsSync(pidPath)) {
-          console.log("Not running (no PID file).");
-          process.exit(0);
-        }
-        const pid = parseInt(readFileSync(pidPath, "utf-8").trim());
-        try {
-          process.kill(pid, 0); // alive?
-          process.kill(pid, "SIGTERM");
-          unlinkSync(pidPath);
-          console.log(`Stopped QMD MCP server (PID ${pid}).`);
-        } catch {
-          unlinkSync(pidPath);
-          console.log("Cleaned up stale PID file (server was not running).");
-        }
-        process.exit(0);
-      }
-
-      if (cli.values.http) {
-        const port = Number(cli.values.port) || 8181;
-        // --host overrides the default localhost bind; QMD_HOST env is the
-        // fallback (resolved in startMcpHttpServer). Use "0.0.0.0" to accept
-        // off-host connections, e.g. a container liveness probe.
-        const host = cli.values.host ? String(cli.values.host) : undefined;
-
-        if (cli.values.daemon) {
-          // Guard: check if already running
-          if (existsSync(pidPath)) {
-            const existingPid = parseInt(readFileSync(pidPath, "utf-8").trim());
-            try {
-              process.kill(existingPid, 0); // alive?
-              console.error(`Already running (PID ${existingPid}). Run 'qmd mcp stop' first.`);
-              process.exit(1);
-            } catch {
-              // Stale PID file — continue
-            }
-          }
-
-          mkdirSync(cacheDir, { recursive: true });
-          const logPath = resolve(cacheDir, "mcp.log");
-          const logFd = openSync(logPath, "w"); // truncate — fresh log per daemon run
-          const selfPath = fileURLToPath(import.meta.url);
-          const indexArgs = cli.values.index ? ["--index", String(cli.values.index)] : [];
-          const hostArgs = host ? ["--host", host] : [];
-          const spawnArgs = selfPath.endsWith(".ts")
-            ? ["--import", pathJoin(dirname(selfPath), "..", "..", "node_modules", "tsx", "dist", "esm", "index.mjs"), selfPath, ...indexArgs, "mcp", "--http", "--port", String(port), ...hostArgs]
-            : [selfPath, ...indexArgs, "mcp", "--http", "--port", String(port), ...hostArgs];
-          const child = nodeSpawn(process.execPath, spawnArgs, {
-            stdio: ["ignore", logFd, logFd],
-            detached: true,
-          });
-          child.unref();
-          closeSync(logFd); // parent's copy; child inherited the fd
-
-          writeFileSync(pidPath, String(child.pid));
-          console.log(`Started on http://${host ?? "localhost"}:${port}/mcp (PID ${child.pid})`);
-          console.log(`Logs: ${logPath}`);
-          process.exit(0);
-        }
-
-        // Foreground HTTP mode — remove top-level cursor handlers so the
-        // async cleanup handlers in startMcpHttpServer actually run.
-        process.removeAllListeners("SIGTERM");
-        process.removeAllListeners("SIGINT");
-        const { startMcpHttpServer } = await import("../mcp/server.js");
-        try {
-          await startMcpHttpServer(port, { dbPath: getDbPath(), host });
-        } catch (e: unknown) {
-          if (typeof e === "object" && e !== null && "code" in e && e.code === "EADDRINUSE") {
-            console.error(`Port ${port} already in use. Try a different port with --port.`);
-            process.exit(1);
-          }
-          throw e;
-        }
-      } else {
-        // Default: stdio transport
-        const { startMcpServer } = await import("../mcp/server.js");
-        await startMcpServer({ dbPath: getDbPath() });
-      }
       break;
     }
 
@@ -4577,11 +4456,9 @@ if (isMain) {
       process.exit(1);
   }
 
-  if (cli.command !== "mcp") {
-    await finishSuccessfulCliCommand({
-      command: cli.command,
-      format: cli.opts.format,
-    });
-  }
+  await finishSuccessfulCliCommand({
+    command: cli.command,
+    format: cli.opts.format,
+  });
 
 } // end if (main module)

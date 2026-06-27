@@ -20,16 +20,6 @@ const pkgDir = resolve(dirname(self), "..");
 const jsEntry = resolve(pkgDir, "dist/cli/qmd.js");
 const tsEntry = resolve(pkgDir, "src/cli/qmd.ts");
 
-// MCP stdio reserves stdout exclusively for JSON-RPC frames. node-llama-cpp
-// / llama.cpp / ggml can write native logs directly to stdout before JS-level
-// log handlers are attached, so seed the native quiet env before Node/Bun imports
-// the CLI and its LLM modules. Preserve explicit user values when provided.
-if (process.argv[2] === "mcp") {
-  process.env.LLAMA_LOG_LEVEL = process.env.LLAMA_LOG_LEVEL || "error";
-  process.env.GGML_LOG_LEVEL = process.env.GGML_LOG_LEVEL || "error";
-  process.env.GGML_BACKEND_SILENT = process.env.GGML_BACKEND_SILENT || "1";
-}
-
 // libggml-metal on macOS uses "residency sets" to keep allocated model memory
 // resident across inference requests (180-second keep_alive timer). The
 // process-static device destructor that runs during libc exit() asserts the
@@ -45,8 +35,7 @@ if (process.argv[2] === "mcp") {
 // by default on darwin. The env var must be set BEFORE the native llama.cpp
 // binding loads, which is why it lives here in the launcher rather than in
 // the JS entry point. Opt back in with QMD_METAL_KEEP_RESIDENCY=1 if you
-// run long-lived qmd processes (the MCP daemon may benefit on hot reload)
-// or are triaging an upstream Metal teardown fix.
+// run long-lived qmd processes or are triaging an upstream Metal teardown fix.
 if (process.platform === "darwin" && process.env.QMD_METAL_KEEP_RESIDENCY !== "1") {
   process.env.GGML_METAL_NO_RESIDENCY = process.env.GGML_METAL_NO_RESIDENCY || "1";
 }
