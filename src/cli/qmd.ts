@@ -463,7 +463,6 @@ async function showStatus(asJson = false): Promise<void> {
   const db = getDb();
 
   // Collections are defined in YAML; no duplicate cleanup needed.
-  // Collections are defined in YAML; no duplicate cleanup needed.
 
   // Index size
   let indexSize = 0;
@@ -639,7 +638,7 @@ async function updateCollections(): Promise<void> {
   const storeInstance = getStore();
   // Collections are defined in YAML; no duplicate cleanup needed.
 
-  // Clear Ollama cache on update
+  // Clear cached query/embedding results on update
   clearCache(db);
 
   const collections = listCollections(db);
@@ -862,7 +861,6 @@ function contextRemove(pathArg: string): void {
     // Remove global context
     setGlobalContext(undefined);
     // Resync so SQLite store_config is updated
-    const s = getStore();
     resyncConfig();
     closeDb();
     console.log(`${c.green}✓${c.reset} Removed global context`);
@@ -1982,8 +1980,8 @@ type OutputOptions = {
   collection?: string | string[];  // Filter by collection name(s)
   lineNumbers?: boolean; // Add line numbers to output
   explain?: boolean;     // Include retrieval score traces (query only)
-  context?: string;      // Optional context for query expansion
-  candidateLimit?: number;  // Max candidates to rerank (default: 40)
+  context?: string;      // Optional domain intent context
+  candidateLimit?: number;  // Max candidates kept after RRF fusion (default: 40)
   intent?: string;       // Domain intent for disambiguation
   skipRerank?: boolean;  // Skip LLM reranking, use RRF scores only
   fullPath?: boolean;    // Show realpath instead of qmd:// URI (relative to $PWD when subpath)
@@ -2740,7 +2738,6 @@ function parseCLI() {
       "full-path": { type: "boolean" },  // show on-disk paths instead of qmd:// (get/multi-get/search/query)
       // Query options
       "candidate-limit": { type: "string", short: "C" },
-      "no-rerank": { type: "boolean", default: false },
       "no-gpu": { type: "boolean", default: false },
       intent: { type: "string" },
     },
@@ -2804,7 +2801,7 @@ function parseCLI() {
     collection: values.collection as string[] | undefined,
     lineNumbers: !!values["line-numbers"],
     candidateLimit: values["candidate-limit"] ? parseInt(String(values["candidate-limit"]), 10) : undefined,
-    skipRerank: true, // qmd-gd: the local reranker is never run; --no-rerank kept as a no-op alias (ADR 0002)
+    skipRerank: true, // qmd-gd never runs a local reranker — results are pure RRF (ADR 0002, 0006)
     explain: !!values.explain,
     intent: values.intent as string | undefined,
     fullPath: !!values["full-path"],
@@ -3270,8 +3267,7 @@ function showHelp(): void {
   console.log("  --all                      - Return all matches (pair with --min-score)");
   console.log("  --min-score <num>          - Minimum similarity score");
   console.log("  --full                     - Output full document instead of snippet");
-  console.log("  -C, --candidate-limit <n>  - Max candidates to rerank (default 40, lower = faster)");
-  console.log("  --no-rerank                - No-op (kept for compatibility; qmd-gd never runs a local reranker — the agent reranks)");
+  console.log("  -C, --candidate-limit <n>  - Max candidates kept after RRF fusion (default 40, lower = faster)");
   console.log("  --no-gpu                   - Force CPU mode for llama.cpp operations (same as QMD_FORCE_CPU=1)");
   console.log("  --line-numbers             - Include line numbers (search; get/multi-get are on by default)");
   console.log("  --no-line-numbers          - Disable line numbers for get/multi-get");
@@ -3571,7 +3567,7 @@ async function checkEmbeddingVectorSamples(db: Database, model: string, fingerpr
   await withLLMSession(async (session) => {
     for (const sample of samples) {
       const hashSeq = `${sample.hash}_${sample.seq}`;
-      const chunks = await chunkDocumentByTokens(sample.body, undefined, undefined, undefined, sample.path, undefined, session.signal);
+      const chunks = await chunkDocumentByTokens(sample.body, undefined, undefined, undefined, session.signal);
       const chunk = chunks[sample.seq];
       if (!chunk) {
         mismatches.push(`${shortHashSeq(hashSeq)}: chunk no longer exists`);
@@ -4266,7 +4262,7 @@ if (isMain) {
       break;
 
     case "vsearch":
-    case "vector-search": // undocumented alias
+    case "vector-search": // alias
       if (!cli.query) {
         console.error("Usage: qmd vsearch [options] <query>");
         process.exit(1);
@@ -4279,7 +4275,7 @@ if (isMain) {
       break;
 
     case "query":
-    case "deep-search": // undocumented alias
+    case "deep-search": // alias
       if (!cli.query) {
         console.error("Usage: qmd query [options] <query>");
         process.exit(1);

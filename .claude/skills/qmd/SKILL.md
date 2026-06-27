@@ -122,8 +122,8 @@ and the candidate snippets/docs and have it return the ranked, filtered set.
 **Never shell out to `claude -p` or any headless Claude process** to do this; use
 the in-session Task tool. qmd itself never calls Claude.
 
-`--no-rerank` is accepted but is a **no-op** (kept for compatibility) — qmd-gd
-never runs a local reranker regardless.
+qmd-gd never runs a local reranker — `qmd query` always returns RRF-fused
+candidates for **you** to rank. There is no rerank flag.
 
 ## Retrieve sources
 

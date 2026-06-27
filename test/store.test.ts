@@ -1034,7 +1034,7 @@ export function hashPassword(password: string): string {
 `.repeat(10); // Repeat to make it large enough to trigger chunking
 
   test("produces same output as chunkDocument (regex/markdown chunking)", async () => {
-    const asyncChunks = await chunkDocumentAsync(TS_CODE, undefined, undefined, undefined, "auth.ts");
+    const asyncChunks = await chunkDocumentAsync(TS_CODE);
     const syncChunks = chunkDocument(TS_CODE);
 
     expect(asyncChunks.length).toBe(syncChunks.length);
@@ -1046,7 +1046,7 @@ export function hashPassword(password: string): string {
 
   test("markdown files chunk identically to chunkDocument", async () => {
     const mdContent = ("# Heading\n\n" + "Some text. ".repeat(200) + "\n\n").repeat(10);
-    const asyncChunks = await chunkDocumentAsync(mdContent, undefined, undefined, undefined, "readme.md");
+    const asyncChunks = await chunkDocumentAsync(mdContent);
     const syncChunks = chunkDocument(mdContent);
 
     expect(asyncChunks.length).toBe(syncChunks.length);

@@ -1,6 +1,6 @@
 # ADR 0002 — Delegate query expansion and reranking to the calling agent
 
-**Status:** Accepted (2026-06-26)
+**Status:** Accepted (2026-06-26) · the no-op-quarantine consequence below is superseded by [ADR 0006](0006-remove-vestigial-generative-surface.md)
 
 ## Context
 
@@ -54,5 +54,8 @@ qmd-gd never invokes Claude. The skill (ADR 0003 area) teaches the loop:
 - The public SDK names `QMDStore.expandQuery` and `SearchOptions.rerank` are **quarantined as
   no-ops** rather than deleted, to avoid breaking the API surface. The internal generative code
   (`ensureGenerateModel`, `ensureRerankModel`, GBNF grammar) has now been removed.
+  **Superseded by [ADR 0006](0006-remove-vestigial-generative-surface.md):** the quarantined
+  no-op surface (`expandQuery`, `rerank`, `--no-rerank`, `chunkStrategy`) was subsequently
+  deleted outright.
 - Result quality now depends on the agent authoring good structured queries — which the skill
   already emphasizes and the agent is well-suited to do.

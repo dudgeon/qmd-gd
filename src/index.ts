@@ -63,7 +63,6 @@ import {
   type ReindexResult,
   type EmbedProgress,
   type EmbedResult,
-  type ChunkStrategy,
 } from "./store.js";
 import {
   LlamaCpp,
@@ -114,7 +113,6 @@ export type { InternalStore };
 
 // Re-export utility functions and types used by frontends
 export { extractSnippet, addLineNumbers, DEFAULT_MULTI_GET_MAX_BYTES };
-export type { ChunkStrategy } from "./store.js";
 
 // Re-export getDefaultDbPath for CLI/MCP that need the default database location
 export { getDefaultDbPath } from "./store.js";
@@ -154,22 +152,18 @@ export interface SearchOptions {
   queries?: ExpandedQuery[];
   /** Domain intent hint — passed through to retrieval ranking */
   intent?: string;
-  /** No-op in qmd-gd (kept for API compatibility) — reranking is done by the calling agent (ADR 0002) */
-  rerank?: boolean;
   /** Filter to a specific collection */
   collection?: string;
   /** Filter to specific collections */
   collections?: string[];
   /** Max results (default: 10) */
   limit?: number;
-  /** Max candidates to rerank (default: 40) */
+  /** Max candidates kept after RRF fusion (default: 40) */
   candidateLimit?: number;
   /** Minimum score threshold */
   minScore?: number;
   /** Include explain traces */
   explain?: boolean;
-  /** Chunk strategy. Vestigial — chunking is always regex/markdown-based. Retained for API stability. */
-  chunkStrategy?: ChunkStrategy;
 }
 
 /**
@@ -186,13 +180,6 @@ export interface LexSearchOptions {
 export interface VectorSearchOptions {
   limit?: number;
   collection?: string;
-}
-
-/**
- * Options for expandQuery() — manual query expansion.
- */
-export interface ExpandQueryOptions {
-  intent?: string;
 }
 
 /**
@@ -226,7 +213,7 @@ export interface QMDStore {
 
   // ── Search ──────────────────────────────────────────────────────────
 
-  /** Full search: query expansion + multi-signal retrieval + LLM reranking */
+  /** Hybrid search: BM25 + vector retrieval fused with RRF (no query expansion or reranking — ADR 0002, 0006) */
   search(options: SearchOptions): Promise<HybridQueryResult[]>;
 
   /** BM25 keyword search (fast, no LLM) */
@@ -234,9 +221,6 @@ export interface QMDStore {
 
   /** Vector similarity search (embedding model, no reranking) */
   searchVector(query: string, options?: VectorSearchOptions): Promise<SearchResult[]>;
-
-  /** Expand a query into typed sub-searches (lex/vec/hyde) for manual control */
-  expandQuery(query: string, options?: ExpandQueryOptions): Promise<ExpandedQuery[]>;
 
   // ── Document Retrieval ──────────────────────────────────────────────
 
@@ -299,7 +283,6 @@ export interface QMDStore {
     collection?: string;
     maxDocsPerBatch?: number;
     maxBatchBytes?: number;
-    chunkStrategy?: ChunkStrategy;
     onProgress?: (info: EmbedProgress) => void;
   }): Promise<EmbedResult>;
 
@@ -407,11 +390,10 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
           intent: opts.intent,
           candidateLimit: opts.candidateLimit,
           skipRerank,
-          chunkStrategy: opts.chunkStrategy,
         });
       }
 
-      // Simple query string — use hybridQuery (expand + search + rerank)
+      // Simple query string — BM25 + vector retrieval fused with RRF (no expansion/rerank)
       return hybridQuery(internal, opts.query!, {
         collection: collections[0],
         limit: opts.limit,
@@ -420,12 +402,10 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         intent: opts.intent,
         candidateLimit: opts.candidateLimit,
         skipRerank,
-        chunkStrategy: opts.chunkStrategy,
       });
     },
     searchLex: async (q, opts) => internal.searchFTS(q, opts?.limit, opts?.collection),
     searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection),
-    expandQuery: async () => [], // qmd-gd: generative query expansion removed (ADR 0002); the calling agent authors structured lex:/vec:/hyde: queries
     get: async (pathOrDocid, opts) => internal.findDocument(pathOrDocid, opts),
     getDocumentBody: async (pathOrDocid, opts) => {
       const result = internal.findDocument(pathOrDocid, { includeBody: false });
@@ -526,7 +506,6 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         collection: embedOpts?.collection,
         maxDocsPerBatch: embedOpts?.maxDocsPerBatch,
         maxBatchBytes: embedOpts?.maxBatchBytes,
-        chunkStrategy: embedOpts?.chunkStrategy,
         onProgress: embedOpts?.onProgress,
       });
     },

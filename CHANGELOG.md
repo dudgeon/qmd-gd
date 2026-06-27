@@ -17,7 +17,7 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 - **Removed local generative inference.** The query-expansion (1.7B) and reranker
   (0.6B) models are no longer run in any default path — not in `qmd query`, `qmd
   vsearch`, or the SDK. First-run downloads drop from ~2.2 GB to ~350 MB (embedding
-  model only). `--no-rerank` is kept as a no-op alias. (ADR 0002)
+  model only). (ADR 0002)
 - **Embeddings stay local** on the default model — the one inference step that can't
   be delegated to the agent. (ADR 0001)
 - `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
@@ -62,8 +62,8 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   a fresh Claude tab to retune `include`/`exclude`, then `duo reload`) and **Refresh index**
   (`terminal:send` stages `qmd update && qmd embed`). `qmd-setup` opens it automatically on
   success **when run inside Duo** (`DUO_SESSION` set); otherwise it's skipped.
-- Added `docs/adr/` recording the architecture decisions (ADR 0001–0005, incl. the
-  plugin→skills unbundle in 0005).
+- Added `docs/adr/` recording the architecture decisions (ADR 0001–0006, incl. the
+  plugin→skills unbundle in 0005 and the vestigial-surface removal in 0006).
 
 ### Removed
 
@@ -81,6 +81,13 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 - **The dead generative-model internals.** `ensureGenerateModel`, `ensureRerankModel`,
   and the GBNF grammar are deleted now that expansion/reranking are delegated to the
   agent (ADR 0002).
+- **The vestigial reranking/expansion API + CLI surface.** Following the no-op
+  quarantine in ADR 0002, the now-dead surface is removed outright (ADR 0006): the
+  `--no-rerank` flag, the SDK `SearchOptions.rerank` option, `QMDStore.expandQuery()`,
+  and the single-value `chunkStrategy`/`ChunkStrategy` (plus the vestigial `filepath`
+  chunker params). `candidateLimit` and `--intent` stay — they still work — with their
+  docs corrected to drop stale "rerank" wording. Also moved `typescript` from
+  `peerDependencies` to `devDependencies`.
 
 ### Notes
 
@@ -125,13 +132,13 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   `editor_uri`/`models` stubs. README now links to it. Model URIs are intentionally
   left as placeholders so the template can't drift from the defaults.
 - README: documented collection filtering (`-c` semantics), the `collection
-  show`/`include`/`exclude`/`update-cmd` subcommands, the `--intent`/`--no-rerank`/
-  `-C`/`--full-path` search flags, the `--format <kind>` output selector (with the
+  show`/`include`/`exclude`/`update-cmd` subcommands, the `--intent`/`-C`/`--full-path`
+  search flags, the `--format <kind>` output selector (with the
   legacy `--json`/`--csv`/`--md`/`--xml`/`--files` booleans noted as aliases),
   `vector-search`/`deep-search` aliases, embed
   memory flags (`--max-docs-per-batch`/`--max-batch-mb`), a sample `--explain`
   score trace, the `qmd doctor`/`qmd init` commands, the `get` `:from:count`
-  suffix and `--no-line-numbers`, an MCP tool parameter reference, and a
+  suffix and `--no-line-numbers`, and a
   Benchmarking section for `qmd bench`.
 - docs/SYNTAX.md: removed the non-existent `q` MCP parameter example (the `query`
   tool and REST endpoint accept only the `searches` array) and added a Scoping

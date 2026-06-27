@@ -19,8 +19,8 @@ Claude Code.
    command for *you* to run; it never installs or downloads anything itself.
 
 > Why it just works: the `qmd` and `qmd-setup` skills live under `.claude/skills/` in the repo,
-> which Claude Code auto-discovers when opened here. To use the `qmd` **search** skill from your
-> *other* projects too, run `qmd skill install --global` (a live symlink into `~/.claude/skills/qmd`).
+> which Claude Code auto-discovers when opened here. To use the `qmd` and `ask-qmd` skills from your
+> *other* projects too, run `qmd skill install --global` (live symlinks into `~/.claude/skills/{qmd,ask-qmd}`).
 
 ## Quick Start (developers)
 
@@ -217,9 +217,6 @@ const results3 = await store.search({
   ],
   collections: ["docs", "notes"],
 })
-
-// `rerank` is accepted but is a no-op in qmd-gd — results are always RRF-fused candidates
-const fast = await store.search({ query: "auth", rerank: false })
 ```
 
 For direct backend access:
@@ -231,9 +228,7 @@ const lexResults = await store.searchLex("auth middleware", { limit: 10 })
 // Vector similarity search (embedding model, no reranking)
 const vecResults = await store.searchVector("how users log in", { limit: 10 })
 
-// `expandQuery` is a no-op in qmd-gd (returns []) — kept for API compatibility.
-// Author your own sub-queries and pass them to search({ queries: [...] }) instead.
-const expanded = await store.expandQuery("auth flow", { intent: "user login" }) // => []
+// Author your own typed sub-queries and pass them to search({ queries: [...] }).
 ```
 
 #### Retrieval
@@ -374,9 +369,10 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 > **qmd-gd note:** qmd-gd is retrieval-only. It runs a single local model — the
 > **embedding** model — and never performs query expansion or LLM re-ranking. The
 > calling agent authors the typed `lex:/vec:/hyde:` sub-queries and ranks the
-> returned candidates itself. The SDK's `rerank`/`expandQuery` surface is a no-op
-> kept for compatibility. See
-> [`docs/adr/0002`](docs/adr/0002-delegate-generative-steps-to-the-agent.md).
+> returned candidates itself. The upstream `rerank`/`expandQuery`/`chunkStrategy`
+> surface has been removed (not stubbed). See
+> [`docs/adr/0002`](docs/adr/0002-delegate-generative-steps-to-the-agent.md) and
+> [`0006`](docs/adr/0006-remove-vestigial-generative-surface.md).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -716,7 +712,6 @@ and `deep-search` (→ `query`).
 --explain          # Include retrieval score traces (query, JSON/CLI output)
 --index <name>     # Use named index
 --intent "<text>"  # Disambiguation context (e.g. "web page load times")
---no-rerank        # No-op (kept for compatibility; qmd-gd never reranks — results are always RRF scores)
 -C, --candidate-limit <n>  # Max candidates returned by fusion (default: 40)
 --full-path        # Emit on-disk filesystem paths instead of qmd:// URIs
 
@@ -1002,6 +997,7 @@ llm_cache       -- Cached embedding/query results
 | `XDG_CACHE_HOME` | `~/.cache` | Cache directory location |
 | `XDG_CONFIG_HOME` | `~/.config` | Config directory location (where `index.yml` lives) |
 | `QMD_CONFIG_DIR` | unset | Override the config directory outright (takes precedence over `XDG_CONFIG_HOME`) |
+| `QMD_EMBED_MODEL` | unset | Override the embedding GGUF model (e.g. a Qwen3-Embedding HF URI). Same effect as `models.embed` in `index.yml`; re-run `qmd embed -f` after changing. |
 | `QMD_LLAMA_GPU` | `auto` | Force llama.cpp GPU backend (`metal`, `vulkan`, `cuda`) or disable GPU with `false` |
 | `QMD_FORCE_CPU` | unset | Set to `1`/`true` to force CPU mode before any CUDA/Vulkan/Metal probing. Equivalent CLI flag: `--no-gpu`. |
 | `QMD_EMBED_PARALLELISM` | automatic | Override embedding context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |

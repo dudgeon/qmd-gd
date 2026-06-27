@@ -197,7 +197,7 @@ not just a list of files.
 If setup is running inside **Duo** — the `DUO_SESSION` environment variable is set — open a
 small visual **scope playground** so the user can see what `/ask-qmd` searches and change it
 with one click. **Only when Duo is present**; skip silently otherwise. This is local and safe
-to run yourself (it reads `qmd collection list --json` and writes one HTML file — no network,
+to run yourself (it reads `qmd status --json` and writes one HTML file — no network,
 no index changes):
 
 ```bash

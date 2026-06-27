@@ -237,14 +237,6 @@ export function findBestCutoff(
   return bestPos;
 }
 
-// =============================================================================
-// Chunk Strategy
-// =============================================================================
-
-// Vestigial: chunking is always regex/markdown-based. Kept (and re-exported by
-// the SDK) only so the public `chunkStrategy?` option type stays stable.
-export type ChunkStrategy = "regex";
-
 /**
  * Core chunk algorithm that operates on precomputed break points and code fences.
  * This is the shared implementation used by the regex/markdown chunker.
@@ -305,8 +297,8 @@ export function chunkDocumentWithBreakPoints(
 // Skip expensive LLM expansion when top result is strong AND clearly separated from runner-up
 export const STRONG_SIGNAL_MIN_SCORE = 0.85;
 export const STRONG_SIGNAL_MIN_GAP = 0.15;
-// Max candidates to pass to reranker — balances quality vs latency.
-// 40 keeps rank 31-40 visible to the reranker (matters for recall on broad queries).
+// Max candidates kept after RRF fusion — balances quality vs latency.
+// 40 keeps rank 31-40 in the returned set (matters for recall on broad queries).
 export const RERANK_CANDIDATE_LIMIT = 40;
 
 /**
@@ -1476,7 +1468,6 @@ export type EmbedOptions = {
   collection?: string;
   maxDocsPerBatch?: number;
   maxBatchBytes?: number;
-  chunkStrategy?: ChunkStrategy;
   /**
    * Max wall-clock duration for the whole embed session, in milliseconds. When the
    * cap is reached, remaining document batches are skipped (re-run `qmd embed` to
@@ -1776,8 +1767,6 @@ export async function generateEmbeddings(
         const chunks = await chunkDocumentByTokens(
           doc.body,
           undefined, undefined, undefined,
-          doc.path,
-          options?.chunkStrategy,
           session.signal,
         );
 
@@ -2266,7 +2255,7 @@ export async function maybeAdoptLegacyEmbeddingFingerprint(store: Store, model: 
   const llm = getLlm(store);
 
   return await withLLMSessionForLlm(llm, async (session) => {
-    const chunks = await chunkDocumentByTokens(sample.body, undefined, undefined, undefined, sample.path, undefined, session.signal);
+    const chunks = await chunkDocumentByTokens(sample.body, undefined, undefined, undefined, session.signal);
     const chunk = chunks[sample.seq];
     if (!chunk) {
       return { checked: true, adopted: 0, reason: `sample chunk ${expectedHashSeq} no longer exists` };
@@ -2690,17 +2679,14 @@ export function chunkDocument(
 }
 
 /**
- * Async wrapper around the regex/markdown chunker. The `_filepath` and
- * `_chunkStrategy` params are vestigial (kept for call-site compatibility);
- * chunking is always regex/markdown-based.
+ * Async wrapper around the regex/markdown chunker. Chunking is always
+ * regex/markdown-based for every file type.
  */
 export async function chunkDocumentAsync(
   content: string,
   maxChars: number = CHUNK_SIZE_CHARS,
   overlapChars: number = CHUNK_OVERLAP_CHARS,
   windowChars: number = CHUNK_WINDOW_CHARS,
-  _filepath?: string,
-  _chunkStrategy: ChunkStrategy = "regex",
 ): Promise<{ text: string; pos: number }[]> {
   const breakPoints = scanBreakPoints(content);
   const codeFences = findCodeFences(content);
@@ -2710,16 +2696,12 @@ export async function chunkDocumentAsync(
 /**
  * Chunk a document by actual token count using the LLM tokenizer.
  * More accurate than character-based chunking but requires async.
- *
- * The `filepath` and `chunkStrategy` params are vestigial (regex chunking only).
  */
 export async function chunkDocumentByTokens(
   content: string,
   maxTokens: number = CHUNK_SIZE_TOKENS,
   overlapTokens: number = CHUNK_OVERLAP_TOKENS,
   windowTokens: number = CHUNK_WINDOW_TOKENS,
-  filepath?: string,
-  chunkStrategy: ChunkStrategy = "regex",
   signal?: AbortSignal
 ): Promise<{ text: string; pos: number; tokens: number }[]> {
   const llm = getDefaultLlamaCpp();
@@ -2732,7 +2714,7 @@ export async function chunkDocumentByTokens(
   const windowChars = windowTokens * avgCharsPerToken;
 
   // Chunk in character space with conservative estimate
-  let charChunks = await chunkDocumentAsync(content, maxChars, overlapChars, windowChars, filepath, chunkStrategy);
+  let charChunks = await chunkDocumentAsync(content, maxChars, overlapChars, windowChars);
 
   // Tokenize and split any chunks that still exceed limit
   const results: { text: string; pos: number; tokens: number }[] = [];
@@ -4539,7 +4521,6 @@ export interface HybridQueryOptions {
   explain?: boolean;        // include backend/RRF/rerank score traces
   intent?: string;          // domain intent hint for disambiguation
   skipRerank?: boolean;     // skip LLM reranking, use only RRF scores
-  chunkStrategy?: ChunkStrategy;
   hooks?: SearchHooks;
 }
 
@@ -4578,17 +4559,17 @@ export function getHybridRrfWeights(rankedListMeta: RankedListMeta[]): number[] 
 }
 
 /**
- * Hybrid search: BM25 + vector + query expansion + RRF + chunked reranking.
+ * Hybrid search: BM25 + vector retrieval over the original query, fused with RRF.
+ *
+ * qmd-gd runs no local query expansion or reranking (ADR 0002, 0006). The
+ * calling agent authors lex/vec/hyde variants (see structuredSearch) and ranks
+ * the returned candidates itself.
  *
  * Pipeline:
- * 1. BM25 probe → skip expansion if strong signal
- * 2. expandQuery() → typed query variants (lex/vec/hyde)
- * 3. Type-routed search: original→vector, lex→FTS, vec/hyde→vector
- * 4. RRF fusion → slice to candidateLimit
- * 5. chunkDocument() + keyword-best-chunk selection
- * 6. rerank on chunks (NOT full bodies — O(tokens) trap)
- * 7. Position-aware score blending (RRF rank × reranker score)
- * 8. Dedup by file, filter by minScore, slice to limit
+ * 1. BM25 + vector retrieval on the original query
+ * 2. RRF fusion → slice to candidateLimit
+ * 3. chunkDocument() + intent-aware keyword-best-chunk selection
+ * 4. Dedup by file, filter by minScore, slice to limit
  */
 export async function hybridQuery(
   store: Store,
@@ -4719,15 +4700,14 @@ export async function hybridQuery(
 
   if (candidates.length === 0) return [];
 
-  // Step 5: Chunk documents, pick best chunk per doc for reranking.
+  // Step 5: Chunk documents, pick best chunk per doc for snippet selection.
   // Reranking full bodies is O(tokens) — the critical perf lesson that motivated this refactor.
   const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
   const intentTerms = intent ? extractIntentTerms(intent) : [];
   const docChunkMap = new Map<string, { chunks: { text: string; pos: number }[]; bestIdx: number }>();
 
-  const chunkStrategy = options?.chunkStrategy;
   for (const cand of candidates) {
-    const chunks = await chunkDocumentAsync(cand.body, undefined, undefined, undefined, cand.file, chunkStrategy);
+    const chunks = await chunkDocumentAsync(cand.body);
     if (chunks.length === 0) continue;
 
     // Pick chunk with most keyword overlap (fallback: first chunk)
@@ -4815,13 +4795,12 @@ export interface VectorSearchResult {
 }
 
 /**
- * Vector-only semantic search with query expansion.
+ * Vector-only semantic search (no query expansion in qmd-gd — ADR 0002, 0006).
  *
  * Pipeline:
- * 1. expandQuery() → typed variants, filter to vec/hyde only (lex irrelevant here)
- * 2. searchVec() for original + vec/hyde variants (sequential — node-llama-cpp embed limitation)
- * 3. Dedup by filepath (keep max score)
- * 4. Sort by score descending, filter by minScore, slice to limit
+ * 1. searchVec() on the query embedding
+ * 2. Dedup by filepath (keep max score)
+ * 3. Sort by score descending, filter by minScore, slice to limit
  */
 export async function vectorSearchQuery(
   store: Store,
@@ -4888,19 +4867,18 @@ export interface StructuredSearchOptions {
   minScore?: number;        // default 0
   candidateLimit?: number;  // default RERANK_CANDIDATE_LIMIT
   explain?: boolean;        // include backend/RRF/rerank score traces
-  /** Domain intent hint for disambiguation — steers reranking and chunk selection */
+  /** Domain intent hint for disambiguation — steers snippet and chunk selection */
   intent?: string;
   /** Skip LLM reranking, use only RRF scores */
   skipRerank?: boolean;
-  chunkStrategy?: ChunkStrategy;
   hooks?: SearchHooks;
 }
 
 /**
- * Structured search: execute pre-expanded queries without LLM query expansion.
+ * Structured search: execute agent-authored lex/vec/hyde queries directly.
  *
- * Designed for LLM callers (MCP/HTTP) that generate their own query expansions.
- * Skips the internal expandQuery() step — goes directly to:
+ * The calling agent supplies the typed sub-queries — qmd-gd runs no local query
+ * expansion or reranking (ADR 0002, 0006).
  *
  * Pipeline:
  * 1. Route searches: lex→FTS, vec/hyde→vector (batch embed)
@@ -5033,7 +5011,7 @@ export async function structuredSearch(
 
   hooks?.onExpand?.("", [], 0); // Signal no expansion (pre-expanded)
 
-  // Step 4: Chunk documents, pick best chunk per doc for reranking
+  // Step 4: Chunk documents, pick best chunk per doc for snippet selection
   // Use first lex query as the "query" for keyword matching, or first vec if no lex
   const primaryQuery = searches.find(s => s.type === 'lex')?.query
     || searches.find(s => s.type === 'vec')?.query
@@ -5041,10 +5019,9 @@ export async function structuredSearch(
   const queryTerms = primaryQuery.toLowerCase().split(/\s+/).filter(t => t.length > 2);
   const intentTerms = intent ? extractIntentTerms(intent) : [];
   const docChunkMap = new Map<string, { chunks: { text: string; pos: number }[]; bestIdx: number }>();
-  const ssChunkStrategy = options?.chunkStrategy;
 
   for (const cand of candidates) {
-    const chunks = await chunkDocumentAsync(cand.body, undefined, undefined, undefined, cand.file, ssChunkStrategy);
+    const chunks = await chunkDocumentAsync(cand.body);
     if (chunks.length === 0) continue;
 
     // Pick chunk with most keyword overlap

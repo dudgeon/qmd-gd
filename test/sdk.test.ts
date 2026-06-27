@@ -20,7 +20,6 @@ import {
   type SearchOptions,
   type LexSearchOptions,
   type VectorSearchOptions,
-  type ExpandQueryOptions,
 } from "../src/index.js";
 import { setDefaultLlamaCpp } from "../src/llm.js";
 
@@ -603,13 +602,12 @@ describe("search (unified API)", () => {
     await expect(store.search({} as SearchOptions)).rejects.toThrow("requires either 'query' or 'queries'");
   });
 
-  test("search() with pre-expanded queries and rerank:false", async () => {
+  test("search() with pre-expanded queries", async () => {
     const results = await store.search({
       queries: [
         { type: "lex", query: "authentication JWT" },
         { type: "lex", query: "login session" },
       ],
-      rerank: false,
     });
     expect(results.length).toBeGreaterThan(0);
   });
@@ -622,16 +620,16 @@ describe("search (unified API)", () => {
       ],
       limit: 5,
       candidateLimit: 1,
-      rerank: false,
     });
 
     expect(results).toHaveLength(1);
   });
 
-  // Tests below use search({ query: ... }) which triggers LLM query expansion
-  describe.skipIf(!!process.env.CI)("with LLM query expansion", () => {
-    test("search() with query and rerank:false returns results", async () => {
-      const results = await store.search({ query: "authentication", rerank: false });
+  // Tests below use search({ query: ... }) which runs real embedding retrieval;
+  // skipped in CI (no embedding model). qmd-gd does no LLM query expansion.
+  describe.skipIf(!!process.env.CI)("query search (needs embedding model)", () => {
+    test("search() with query returns results", async () => {
+      const results = await store.search({ query: "authentication" });
       expect(results.length).toBeGreaterThan(0);
       expect(results[0]).toHaveProperty("file");
       expect(results[0]).toHaveProperty("score");
@@ -640,11 +638,10 @@ describe("search (unified API)", () => {
       expect(results[0]).toHaveProperty("docid");
     }, 90000);
 
-    test("search() with intent and rerank:false returns results", async () => {
+    test("search() with intent returns results", async () => {
       const results = await store.search({
         query: "meeting",
         intent: "quarterly planning and roadmap",
-        rerank: false,
       });
       expect(results.length).toBeGreaterThan(0);
     }, 60000);
@@ -653,7 +650,6 @@ describe("search (unified API)", () => {
       const results = await store.search({
         query: "authentication",
         collection: "docs",
-        rerank: false,
       });
       for (const r of results) {
         expect(r.file).toMatch(/^qmd:\/\/docs\//);
@@ -664,7 +660,6 @@ describe("search (unified API)", () => {
       const results = await store.search({
         query: "authentication",
         collections: ["docs"],
-        rerank: false,
       });
       for (const r of results) {
         expect(r.file).toMatch(/^qmd:\/\/docs\//);
@@ -672,12 +667,12 @@ describe("search (unified API)", () => {
     });
 
     test("search() with limit", async () => {
-      const results = await store.search({ query: "meeting", limit: 1, rerank: false });
+      const results = await store.search({ query: "meeting", limit: 1 });
       expect(results.length).toBeLessThanOrEqual(1);
     });
 
     test("search() returns empty for non-matching query", async () => {
-      const results = await store.search({ query: "xyznonexistentterm123", rerank: false });
+      const results = await store.search({ query: "xyznonexistentterm123" });
       expect(results).toHaveLength(0);
     });
   });
@@ -1271,7 +1266,6 @@ describe("type exports", () => {
     expect(typeof store.search).toBe("function");
     expect(typeof store.searchLex).toBe("function");
     expect(typeof store.searchVector).toBe("function");
-    expect(typeof store.expandQuery).toBe("function");
     expect(typeof store.get).toBe("function");
     expect(typeof store.multiGet).toBe("function");
     expect(typeof store.addCollection).toBe("function");

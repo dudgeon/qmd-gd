@@ -136,12 +136,11 @@ qmd multi-get "#abc123, #def456"
 --min-score <num>        # Minimum score threshold
 --full                   # Show full document content
 --intent <text>          # Describe what you're after to sharpen ranking (query)
---no-rerank              # Skip LLM reranking (faster, lower quality)
 --full-path              # Show on-disk paths instead of qmd:// URIs
 
 # Get / multi-get
 -l <num>                 # Maximum lines per file
---max-bytes <num>        # Skip files larger than this (default 10KB)
+--max-bytes <num>        # Skip files larger than this (default 64KB)
 --no-line-numbers        # Disable line numbers (on by default for get/multi-get)
 
 # Output format (search, query, multi-get)
