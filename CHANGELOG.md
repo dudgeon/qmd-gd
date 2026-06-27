@@ -22,11 +22,13 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   be delegated to the agent. (ADR 0001)
 - `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
 - **Runs on Node (>=20).** Install is `npm install && npm run build && npm link`.
-  `bin/qmd` fails fast with a clear message on older Node, `.npmrc engine-strict`
-  makes `npm install` refuse an unsupported Node, and `qmd doctor` reports the Node
-  version — no more cryptic native/ABI failures. Verified end-to-end on Node 20 and
-  22 (full suite green). Fork identity is private (`dudgeon/qmd-gd`); not published
-  to npm.
+  `.npmrc engine-strict` makes `npm install` fail fast with a clear `EBADENGINE`
+  error on an unsupported Node (instead of a half-broken install), and `qmd doctor`
+  reports the running Node version against the floor — no more cryptic native/ABI
+  failures. (The `bin/qmd` ESM launcher can't self-guard: Node <20 throws
+  `ERR_UNKNOWN_FILE_EXTENSION` before it runs, which is why the gate is install-time.)
+  Verified end-to-end on Node 20 and 22 (full suite green). Fork identity is private
+  (`dudgeon/qmd-gd`); not published to npm.
 - Fixed `.gitignore` so the `docs/adr/` records are actually tracked (the `*.md` rule
   had been excluding them).
 - Rewrote the `qmd` skill around the agent-driven loop (author structured query →

@@ -3288,8 +3288,8 @@ function showHelp(): void {
   console.log(`Index: ${getDbPath()}`);
 }
 
-// Minimum supported Node major. Keep in sync with package.json "engines.node"
-// and the guard in bin/qmd.
+// Minimum supported Node major. Keep in sync with package.json "engines.node",
+// the `.npmrc` engine-strict gate, and the explainer comment in bin/qmd.
 const MIN_NODE_MAJOR = 20;
 
 function doctorCheck(label: string, ok: boolean, details: string): void {
