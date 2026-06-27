@@ -5,9 +5,8 @@ QMD queries are structured documents with typed sub-queries. Each line specifies
 ## Grammar
 
 ```ebnf
-query          = expand_query | query_document ;
-expand_query   = text | explicit_expand ;
-explicit_expand= "expand:" text ;
+query          = bare_query | query_document ;
+bare_query     = text ;                               (* one line, no prefix *)
 query_document = [ intent_line ] { typed_line } ;
 intent_line    = "intent:" text newline ;
 typed_line     = type ":" text newline ;
@@ -28,12 +27,14 @@ newline        = "\n" ;
 
 ## Default Behavior
 
-A QMD query is either a single expand query or a multi-line query document. Any single-line query with no prefix is treated as an expand query and passed to the expansion model, which emits lex, vec, and hyde variants automatically.
+A QMD query is either a single bare line or a multi-line query document. A bare,
+unprefixed line is used **as-is** to seed BM25 + vector retrieval — qmd-gd does **not**
+expand it into variants (there is no local query-expansion model). To get lex/vec/hyde
+coverage, author the typed lines yourself (that's the agent's job — see the `qmd` skill).
 
 ```
-# These are equivalent and cannot be combined with typed lines:
+# Bare query — seeds FTS + vector directly, no expansion:
 how does authentication work
-expand: how does authentication work
 ```
 
 ## Lex Query Syntax
@@ -90,17 +91,16 @@ vec: how does rate limiting work in the API
 hyde: The API implements rate limiting using a token bucket algorithm...
 ```
 
-## Expand Queries
+## Bare Queries
 
-An expand query stands alone; it's not mixed with typed lines. You can either rely on the default untyped form or add the explicit `expand:` prefix:
+A bare query is a single unprefixed line; it's not mixed with typed lines:
 
 ```
-expand: error handling best practices
-# equivalent
 error handling best practices
 ```
 
-Both forms call the local query expansion model, which generates lex, vec, and hyde variations automatically.
+It is used **directly** as a BM25 + vector seed. qmd-gd does not expand it — for
+lex/vec/hyde coverage, write the typed lines yourself (see the multi-line form above).
 
 ## Intent
 
@@ -120,8 +120,8 @@ Without intent, "performance" is ambiguous (web-perf? team health? fitness?). Wi
 
 ## Constraints
 
-- Top-level query must be either a standalone expand query or a multi-line document
-- Query documents allow only `lex`, `vec`, `hyde`, and `intent` typed lines (no `expand:` inside)
+- Top-level query must be either a single bare line or a multi-line document
+- Query documents allow only `lex`, `vec`, `hyde`, and `intent` typed lines
 - `lex` syntax (`-term`, `"phrase"`) only works in lex queries
 - At most one `intent:` line per query document; cannot appear alone
 - Empty lines are ignored
