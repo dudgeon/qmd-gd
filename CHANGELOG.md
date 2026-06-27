@@ -21,6 +21,12 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 - **Embeddings stay local** on the default model — the one inference step that can't
   be delegated to the agent. (ADR 0001)
 - `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
+- **Runs on Node (>=22) — no Bun required.** A committed `package-lock.json` makes the
+  `qmd` launcher route to Node; install is `npm install && npm run build && npm link`.
+  Verified end-to-end on Node (index/embed/vector search all work). Fork identity is
+  private (`dudgeon/qmd-gd`); not published to npm.
+- Fixed `.gitignore` so the `docs/adr/` records are actually tracked (the `*.md` rule
+  had been excluding them).
 - Rewrote the `qmd` skill around the agent-driven loop (author structured query →
   retrieve → rank candidates yourself, optionally via a Task-tool subagent) and added
   a manual-invoke **`qmd-setup`** skill that sequences first-time install (build/link,

@@ -1,6 +1,5 @@
 node_modules/
 dist/
-package-lock.json
 .npmrc
 *.sqlite
 .DS_Store
@@ -14,7 +13,7 @@ texts/
 !CHANGELOG.md
 !skills/**/*.md
 !finetune/*.md
-!docs/*.md
+!docs/**/*.md
 finetune/outputs/
 finetune/data/train/
 .claude/
