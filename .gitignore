@@ -1,6 +1,5 @@
 node_modules/
 dist/
-package-lock.json
 .npmrc
 *.sqlite
 .DS_Store
@@ -12,9 +11,9 @@ texts/
 !README.md
 !CLAUDE.md
 !CHANGELOG.md
-!skills/**/*.md
-!finetune/*.md
-!docs/*.md
-finetune/outputs/
-finetune/data/train/
-.claude/
+!docs/**/*.md
+# Project skills ship in-repo so Claude Code auto-discovers them when opened here.
+# Ignore everything else under .claude/ (worktrees, local settings, caches).
+.claude/*
+!.claude/skills/
+!.claude/skills/**

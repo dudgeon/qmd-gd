@@ -11,7 +11,7 @@
  *   - bm25: BM25 keyword search (searchLex)
  *   - vector: Vector similarity search (searchVector)
  *   - hybrid: BM25 + vector RRF fusion without reranking
- *   - full: Full hybrid pipeline with LLM reranking
+ *   - full: same RRF-fused candidates an agent would rerank itself (qmd-gd runs no local reranker)
  */
 
 import { readFileSync } from "node:fs";
@@ -147,18 +147,21 @@ const BACKENDS: Backend[] = [
     run: async (store, query, limit, collection) => {
       const structured = parseStructuredQuery(query.query);
       const results = structured
-        ? await store.search({ queries: structured.searches, intent: structured.intent, limit, collection, rerank: false })
-        : await store.search({ query: query.query, limit, collection, rerank: false });
+        ? await store.search({ queries: structured.searches, intent: structured.intent, limit, collection })
+        : await store.search({ query: query.query, limit, collection });
       return results.map((r: HybridQueryResult) => r.file);
     },
   },
   {
+    // qmd-gd does not run a local reranker (ADR 0002); "full" now mirrors the
+    // RRF-fused hybrid path (rerank is a no-op) and stands in for the candidate
+    // set an agent would rerank itself.
     name: "full",
     run: async (store, query, limit, collection) => {
       const structured = parseStructuredQuery(query.query);
       const results = structured
-        ? await store.search({ queries: structured.searches, intent: structured.intent, limit, collection, rerank: true })
-        : await store.search({ query: query.query, limit, collection, rerank: true });
+        ? await store.search({ queries: structured.searches, intent: structured.intent, limit, collection })
+        : await store.search({ query: query.query, limit, collection });
       return results.map((r: HybridQueryResult) => r.file);
     },
   },

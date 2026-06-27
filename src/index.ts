@@ -2,7 +2,7 @@
  * QMD SDK - Library mode for programmatic access to QMD search and indexing.
  *
  * Usage:
- *   import { createStore } from '@tobilu/qmd'
+ *   import { createStore } from 'qmd-gd'
  *
  *   const store = await createStore({
  *     dbPath: './my-index.sqlite',
@@ -63,7 +63,6 @@ import {
   type ReindexResult,
   type EmbedProgress,
   type EmbedResult,
-  type ChunkStrategy,
 } from "./store.js";
 import {
   LlamaCpp,
@@ -114,7 +113,6 @@ export type { InternalStore };
 
 // Re-export utility functions and types used by frontends
 export { extractSnippet, addLineNumbers, DEFAULT_MULTI_GET_MAX_BYTES };
-export type { ChunkStrategy } from "./store.js";
 
 // Re-export getDefaultDbPath for CLI/MCP that need the default database location
 export { getDefaultDbPath } from "./store.js";
@@ -148,28 +146,24 @@ export type UpdateResult = {
  * Options for the unified search() method.
  */
 export interface SearchOptions {
-  /** Simple query string — will be auto-expanded via LLM */
+  /** Simple query string — seeds BM25 + vector retrieval directly (no generative expansion in qmd-gd) */
   query?: string;
-  /** Pre-expanded queries (from expandQuery) — skips auto-expansion */
+  /** Typed sub-queries the caller authored (lex/vec/hyde) — the agent's own query expansion */
   queries?: ExpandedQuery[];
-  /** Domain intent hint — steers expansion and reranking */
+  /** Domain intent hint — passed through to retrieval ranking */
   intent?: string;
-  /** Rerank results using LLM (default: true) */
-  rerank?: boolean;
   /** Filter to a specific collection */
   collection?: string;
   /** Filter to specific collections */
   collections?: string[];
   /** Max results (default: 10) */
   limit?: number;
-  /** Max candidates to rerank (default: 40) */
+  /** Max candidates kept after RRF fusion (default: 40) */
   candidateLimit?: number;
   /** Minimum score threshold */
   minScore?: number;
   /** Include explain traces */
   explain?: boolean;
-  /** Chunk strategy: "auto" (default, uses AST for code files) or "regex" (legacy) */
-  chunkStrategy?: ChunkStrategy;
 }
 
 /**
@@ -186,13 +180,6 @@ export interface LexSearchOptions {
 export interface VectorSearchOptions {
   limit?: number;
   collection?: string;
-}
-
-/**
- * Options for expandQuery() — manual query expansion.
- */
-export interface ExpandQueryOptions {
-  intent?: string;
 }
 
 /**
@@ -226,7 +213,7 @@ export interface QMDStore {
 
   // ── Search ──────────────────────────────────────────────────────────
 
-  /** Full search: query expansion + multi-signal retrieval + LLM reranking */
+  /** Hybrid search: BM25 + vector retrieval fused with RRF (no query expansion or reranking — ADR 0002, 0006) */
   search(options: SearchOptions): Promise<HybridQueryResult[]>;
 
   /** BM25 keyword search (fast, no LLM) */
@@ -234,9 +221,6 @@ export interface QMDStore {
 
   /** Vector similarity search (embedding model, no reranking) */
   searchVector(query: string, options?: VectorSearchOptions): Promise<SearchResult[]>;
-
-  /** Expand a query into typed sub-searches (lex/vec/hyde) for manual control */
-  expandQuery(query: string, options?: ExpandQueryOptions): Promise<ExpandedQuery[]>;
 
   // ── Document Retrieval ──────────────────────────────────────────────
 
@@ -299,7 +283,6 @@ export interface QMDStore {
     collection?: string;
     maxDocsPerBatch?: number;
     maxBatchBytes?: number;
-    chunkStrategy?: ChunkStrategy;
     onProgress?: (info: EmbedProgress) => void;
   }): Promise<EmbedResult>;
 
@@ -376,8 +359,6 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   // auto-unloads after 5 min inactivity to free VRAM.
   const llm = new LlamaCpp({
     embedModel: config?.models?.embed,
-    generateModel: config?.models?.generate,
-    rerankModel: config?.models?.rerank,
     inactivityTimeoutMs: 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
@@ -397,7 +378,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         ...(opts.collection ? [opts.collection] : []),
         ...(opts.collections ?? []),
       ];
-      const skipRerank = opts.rerank === false;
+      const skipRerank = true; // qmd-gd: reranking is delegated to the calling agent (ADR 0002); the `rerank` option is a no-op
 
       if (opts.queries) {
         // Pre-expanded queries — use structuredSearch
@@ -409,11 +390,10 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
           intent: opts.intent,
           candidateLimit: opts.candidateLimit,
           skipRerank,
-          chunkStrategy: opts.chunkStrategy,
         });
       }
 
-      // Simple query string — use hybridQuery (expand + search + rerank)
+      // Simple query string — BM25 + vector retrieval fused with RRF (no expansion/rerank)
       return hybridQuery(internal, opts.query!, {
         collection: collections[0],
         limit: opts.limit,
@@ -422,12 +402,10 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         intent: opts.intent,
         candidateLimit: opts.candidateLimit,
         skipRerank,
-        chunkStrategy: opts.chunkStrategy,
       });
     },
     searchLex: async (q, opts) => internal.searchFTS(q, opts?.limit, opts?.collection),
     searchVector: async (q, opts) => internal.searchVec(q, llm.embedModelName, opts?.limit, opts?.collection),
-    expandQuery: async (q, opts) => internal.expandQuery(q, undefined, opts?.intent),
     get: async (pathOrDocid, opts) => internal.findDocument(pathOrDocid, opts),
     getDocumentBody: async (pathOrDocid, opts) => {
       const result = internal.findDocument(pathOrDocid, { includeBody: false });
@@ -528,7 +506,6 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
         collection: embedOpts?.collection,
         maxDocsPerBatch: embedOpts?.maxDocsPerBatch,
         maxBatchBytes: embedOpts?.maxBatchBytes,
-        chunkStrategy: embedOpts?.chunkStrategy,
         onProgress: embedOpts?.onProgress,
       });
     },

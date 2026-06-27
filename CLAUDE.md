@@ -1,12 +1,32 @@
-# QMD - Query Markup Documents
+# QMD - Query Markup Documents (qmd-gd fork)
 
-Use Bun instead of Node.js (`bun` not `node`, `bun install` not `npm install`).
+qmd-gd runs on **Node (>=22)** (`npm install`, `npm run build`, `npm link`). After a
+Node major upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec,
+node-llama-cpp) match the new ABI.
+
+qmd-gd ships its skills as plain folders under `.claude/skills/` (no Claude Code plugin).
+When this folder is opened in Claude Code, the `qmd` and `qmd-setup` skills auto-load.
+
+## Getting set up
+
+When the user asks to **get set up / install qmd / "/setup" / "help me get started"**, read
+and follow [`.claude/skills/qmd-setup/SKILL.md`](.claude/skills/qmd-setup/SKILL.md) step by
+step. Two hard rules from that skill that you MUST honor:
+
+- **Never run state-mutating commands for the user** (`npm install`, `qmd skill install`,
+  `qmd collection add`, `qmd update`, `qmd embed`, `qmd pull`). Print them for the user to run.
+- **Never contact an external network domain.** Only `capitalone.com` / `github.com` are
+  reachable by you; the user runs anything that hits the npm registry, HuggingFace, or
+  prebuilt hosts (including the preflight script) from their own terminal.
+
+The only setup helper you may run yourself is the local, network-free probe
+`.claude/skills/qmd-setup/scripts/qmd-setup-context.sh`.
 
 ## Commands
 
 ```sh
 qmd collection add . --name <n>   # Create/index collection
-qmd collection list               # List all collections with details
+qmd collection list [--json]      # List collections; --json adds scope (includeByDefault) + counts
 qmd collection remove <name>      # Remove a collection by name
 qmd collection rename <old> <new> # Rename a collection
 qmd init                          # Create a project-local .qmd index
@@ -17,18 +37,14 @@ qmd context check                 # Check for collections/paths missing context
 qmd context rm <path>             # Remove context
 qmd get <file>[:from[:count]]     # Get by path or docid (#abc123); optional line range
 qmd multi-get <pattern>           # Get multiple docs by glob or comma-separated list
-qmd status                        # Show index status and collections
+qmd status [--json]               # Index status (docs, vectors, freshness); --json for agents/dashboard
 qmd doctor                        # Diagnose config, index, model, and device issues
 qmd update                        # Re-index collections; configured update hooks run first
-qmd embed                         # Generate vector embeddings (uses node-llama-cpp)
-qmd query <query>                 # Search with query expansion + reranking (recommended)
-qmd search <query>                # Full-text keyword search (BM25, no LLM)
+qmd embed                         # Generate vector embeddings (local embedding model)
+qmd query <query>                 # Hybrid BM25 + vector (RRF); you author lex:/vec:/hyde: and rank candidates
+qmd search <query>                # Full-text keyword search (BM25, no model)
 qmd vsearch <query>               # Vector similarity search (no reranking)
 qmd bench <fixture.json>          # Run search-quality benchmarks
-qmd mcp                           # Start MCP server (stdio transport)
-qmd mcp --http [--port N]         # Start MCP server (HTTP, default port 8181)
-qmd mcp --http --daemon           # Start as background daemon
-qmd mcp stop                      # Stop background MCP daemon
 ```
 
 ## Collection Management
@@ -120,12 +136,11 @@ qmd multi-get "#abc123, #def456"
 --min-score <num>        # Minimum score threshold
 --full                   # Show full document content
 --intent <text>          # Describe what you're after to sharpen ranking (query)
---no-rerank              # Skip LLM reranking (faster, lower quality)
 --full-path              # Show on-disk paths instead of qmd:// URIs
 
 # Get / multi-get
 -l <num>                 # Maximum lines per file
---max-bytes <num>        # Skip files larger than this (default 10KB)
+--max-bytes <num>        # Skip files larger than this (default 64KB)
 --no-line-numbers        # Disable line numbers (on by default for get/multi-get)
 
 # Output format (search, query, multi-get)
@@ -136,8 +151,8 @@ qmd multi-get "#abc123, #def456"
 ## Development
 
 ```sh
-bun src/cli/qmd.ts <command>   # Run from source
-bun link               # Install globally as 'qmd'
+npx tsx src/cli/qmd.ts <command>   # Run from source (Node)
+npm link                           # Install globally as 'qmd'
 ```
 
 ## Tests
@@ -146,17 +161,15 @@ All tests live in `test/`. Run everything:
 
 ```sh
 npx vitest run --reporter=verbose test/
-bun test --preload ./src/test-preload.ts test/
 ```
 
 ## Architecture
 
 - SQLite FTS5 for full-text search (BM25)
 - sqlite-vec for vector similarity search
-- node-llama-cpp for embeddings (embeddinggemma), reranking (qwen3-reranker), and query expansion (Qwen3)
+- node-llama-cpp for **embeddings only** (embeddinggemma). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
 - Reciprocal Rank Fusion (RRF) for combining results
-- Smart chunking: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries
-- AST-aware chunking: use `--chunk-strategy auto` to chunk code files (.ts/.js/.py/.go/.rs) at function/class/import boundaries via tree-sitter. Default is `regex` (existing behavior). Markdown and unknown file types always use regex chunking.
+- Chunking is regex/markdown-only: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries. There is no AST/code-aware chunking.
 
 ## Important: Do NOT run automatically
 
@@ -167,18 +180,9 @@ bun test --preload ./src/test-preload.ts test/
 
 ## Do NOT compile
 
-- Never run `bun build --compile` - it overwrites the shell wrapper and breaks sqlite-vec
 - The `qmd` file is a shell script that runs compiled JS from `dist/` - do not replace it
 - `npm run build` compiles TypeScript to `dist/` via `tsc -p tsconfig.build.json`
 
-## Releasing
+## Changelog
 
-Use `/release <version>` to cut a release. Full changelog standards,
-release workflow, and git hook setup are documented in the
-[release skill](skills/release/SKILL.md).
-
-Key points:
-- Add changelog entries under `## [Unreleased]` **as you make changes**
-- The release script renames `[Unreleased]` → `[X.Y.Z] - date` at release time
-- Credit external PRs with `#NNN (thanks @username)`
-- GitHub releases roll up the full minor series (e.g. 1.2.0 through 1.2.3)
+- Add changelog entries under `## [Unreleased]` **as you make changes**.

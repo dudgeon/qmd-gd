@@ -2,6 +2,99 @@
 
 ## [Unreleased]
 
+**qmd-gd fork.** Reworked for locked-down environments that forbid MCP servers and
+local generative-LLM inference. qmd-gd is now a retrieval-only engine: it runs the
+local **embedding** model for BM25 + vector search and returns RRF-fused candidates.
+Query expansion and reranking are delegated to the calling Claude agent (which
+authors `lex:/vec:/hyde:` queries and ranks the candidates) — qmd never invokes
+Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this.
+
+### Changes
+
+- **Removed the MCP server.** `qmd mcp` (stdio + HTTP) and the
+  `@modelcontextprotocol/sdk` dependency are gone; the CLI plus the bundled skill are
+  the only interface. (ADR 0003)
+- **Removed local generative inference.** The query-expansion (1.7B) and reranker
+  (0.6B) models are no longer run in any default path — not in `qmd query`, `qmd
+  vsearch`, or the SDK. First-run downloads drop from ~2.2 GB to ~350 MB (embedding
+  model only). (ADR 0002)
+- **Embeddings stay local** on the default model — the one inference step that can't
+  be delegated to the agent. (ADR 0001)
+- `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
+- **Runs on Node (>=22).** Install is `npm install && npm run build && npm link`.
+  Verified end-to-end on Node (index/embed/vector search all work). Fork identity is
+  private (`dudgeon/qmd-gd`); not published to npm.
+- Fixed `.gitignore` so the `docs/adr/` records are actually tracked (the `*.md` rule
+  had been excluding them).
+- Rewrote the `qmd` skill around the agent-driven loop (author structured query →
+  retrieve → rank candidates yourself, optionally via a Task-tool subagent) and added
+  a manual-invoke **`qmd-setup`** skill that sequences first-time install (build/link,
+  `qmd skill install --global`, add collections, index, embed, schedule, verify).
+- Hardened the `qmd-setup` skill for restricted-egress networks: the agent must never
+  contact an external domain (only `capitalone.com`/`github.com` are reachable by the
+  agent). The network preflight (`preflight-deps.sh`, which `curl`s npm/HuggingFace) is
+  now explicitly **user-run** — the agent hands it over and reads back the pasted output.
+  The local read-only probe (`qmd-setup-context.sh`) stays agent-runnable (no network).
+- **Unbundled the Claude Code plugin → plain skills folder.** Removed
+  `.claude-plugin/marketplace.json` and moved the skills from `skills/` to **`.claude/skills/`**
+  (`qmd`, `qmd-setup`). Claude Code now **auto-discovers them when this folder is opened** — no
+  plugin install — which matters where third-party plugins are disallowed. `qmd skill install
+  --global` now makes a **live symlink** `~/.claude/skills/qmd -> <checkout>` (was a copied
+  bootstrap stub under `.agents/skills/`), so `git pull` keeps the global skill current. Added a
+  CLAUDE.md "Getting set up" route so "help me get set up" / `/qmd-setup` works on a fresh
+  download, and a friendly README "Get started" (download ZIP → open Claude Code → ask).
+- **Added the `ask-qmd` skill** — a turnkey `/ask-qmd "<question>"` that returns a **cited
+  answer** from qmd's default-included collections. It picks **quick BM25 keyword search** for
+  exact-word questions (or when the user says "quick") and **thorough hybrid search** otherwise,
+  reads the top sources, and answers with citations. **In Duo** it then offers to open the top
+  source and jump to the answer span — `duo doc find`→`goto` *by text* (Duo's editor renumbers
+  lines, so it matches by phrase, not qmd's raw line), with an optional removable `duo doc
+  highlight`, using `--full-path` for the on-disk file. `qmd skill install --global` now symlinks both `qmd` and
+  `ask-qmd` (qmd-setup stays checkout-local), and the `qmd-setup` skill gained a "default ask
+  scope" step that sets the scope via `qmd collection include/exclude` (no separate config —
+  the scope is qmd's include/exclude state, so it can't drift).
+- **Added a Duo qmd dashboard.** `qmd status --json` and `qmd collection list --json` expose
+  machine-readable index health + scope (doc/vector counts, last-indexed/last-embedded
+  timestamps, pending-embedding, index size, `includeByDefault`, embedding model). A generator
+  (`.claude/skills/qmd-setup/scripts/scope-playground.mjs`) renders an **Atelier-styled** HTML
+  canvas under `~/.claude/duo/` with: an **Index status** grid, the **search scope** (in vs. out
+  of default), and a **"how qmd works"** explainer. Actions: **Change scope** (`claude:spawn` →
+  a fresh Claude tab to retune `include`/`exclude`, then `duo reload`) and **Refresh index**
+  (`terminal:send` stages `qmd update && qmd embed`). `qmd-setup` opens it automatically on
+  success **when run inside Duo** (`DUO_SESSION` set); otherwise it's skipped.
+- Added `docs/adr/` recording the architecture decisions (ADR 0001–0006, incl. the
+  plugin→skills unbundle in 0005 and the vestigial-surface removal in 0006).
+
+### Removed
+
+- **Claude Code plugin packaging.** `.claude-plugin/marketplace.json` and the
+  `.agents/skills` copy + bootstrap-stub install path are gone — qmd-gd is a plain skills
+  folder now (see Changes). Also dropped the now-dead architecture image reference from the README.
+- **Bun support.** qmd-gd is Node-only (>=22); the Bun runtime path, lockfile, and
+  launcher detection are gone.
+- **AST/tree-sitter code chunking.** The `--chunk-strategy auto` flag and the
+  `web-tree-sitter` grammars are removed — chunking is regex/markdown-only.
+- **The release/publish machinery + CI/Nix workflows.** The `/release` skill, release
+  scripts, git hooks, GitHub Actions publish/CI workflows, and the Nix flake are gone;
+  this private fork is not published.
+- **The `finetune/` pipeline.** The query-expansion fine-tuning code is removed.
+- **The dead generative-model internals.** `ensureGenerateModel`, `ensureRerankModel`,
+  and the GBNF grammar are deleted now that expansion/reranking are delegated to the
+  agent (ADR 0002).
+- **The vestigial reranking/expansion API + CLI surface.** Following the no-op
+  quarantine in ADR 0002, the now-dead surface is removed outright (ADR 0006): the
+  `--no-rerank` flag, the SDK `SearchOptions.rerank` option, `QMDStore.expandQuery()`,
+  and the single-value `chunkStrategy`/`ChunkStrategy` (plus the vestigial `filepath`
+  chunker params). `candidateLimit` and `--intent` stay — they still work — with their
+  docs corrected to drop stale "rerank" wording. Also moved `typescript` from
+  `peerDependencies` to `devDependencies`.
+
+### Notes
+
+- Scheduled index refresh is user-configured (cron), never auto-run by Claude, and runs
+  via Duo's scheduler as a shell job (`qmd update && qmd embed`) — managed (run/pause/
+  resume/edit) natively in Duo's Home view. qmd-gd ships no scheduler of its own. (ADR 0004)
+
 ## [2.6.3] - 2026-06-24
 
 ### Added
@@ -39,13 +132,13 @@
   `editor_uri`/`models` stubs. README now links to it. Model URIs are intentionally
   left as placeholders so the template can't drift from the defaults.
 - README: documented collection filtering (`-c` semantics), the `collection
-  show`/`include`/`exclude`/`update-cmd` subcommands, the `--intent`/`--no-rerank`/
-  `-C`/`--full-path` search flags, the `--format <kind>` output selector (with the
+  show`/`include`/`exclude`/`update-cmd` subcommands, the `--intent`/`-C`/`--full-path`
+  search flags, the `--format <kind>` output selector (with the
   legacy `--json`/`--csv`/`--md`/`--xml`/`--files` booleans noted as aliases),
   `vector-search`/`deep-search` aliases, embed
   memory flags (`--max-docs-per-batch`/`--max-batch-mb`), a sample `--explain`
   score trace, the `qmd doctor`/`qmd init` commands, the `get` `:from:count`
-  suffix and `--no-line-numbers`, an MCP tool parameter reference, and a
+  suffix and `--no-line-numbers`, and a
   Benchmarking section for `qmd bench`.
 - docs/SYNTAX.md: removed the non-existent `q` MCP parameter example (the `query`
   tool and REST endpoint accept only the `searches` array) and added a Scoping

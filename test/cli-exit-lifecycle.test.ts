@@ -105,12 +105,10 @@ describe("CLI successful-exit lifecycle", () => {
       },
     });
 
+    // qmd-gd runs only the embedding model — no rerank/generate contexts to dispose.
     Object.assign(llm as unknown as Record<string, unknown>, {
       embedContexts: [disposable("embed-context")],
-      rerankContexts: [disposable("rerank-context")],
       embedModel: disposable("embed-model"),
-      generateModel: disposable("generate-model"),
-      rerankModel: disposable("rerank-model"),
       llama: disposable("llama"),
     });
 
@@ -118,10 +116,7 @@ describe("CLI successful-exit lifecycle", () => {
 
     expect(calls).toEqual([
       "embed-context",
-      "rerank-context",
       "embed-model",
-      "generate-model",
-      "rerank-model",
       "llama",
     ]);
   });

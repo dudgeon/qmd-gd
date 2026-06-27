@@ -1,7 +1,8 @@
 {
-  "name": "@tobilu/qmd",
+  "name": "qmd-gd",
   "version": "2.6.3",
-  "description": "Query Markup Documents - On-device hybrid search for markdown files with BM25, vector search, and LLM reranking",
+  "description": "Query Markup Documents (qmd-gd fork) - on-device BM25 + vector search for locked-down agent environments; no MCP, no local generative models",
+  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,56 +18,37 @@
   "files": [
     "bin/",
     "dist/",
-    "skills/",
+    ".claude/skills/",
     "scripts/build.mjs",
-    "scripts/check-package-grammars.mjs",
-    "scripts/package-smoke.mjs",
     "scripts/test-all.mjs",
+    "docs/adr/",
     "LICENSE",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "prepare": "[ -d .git ] && ./scripts/install-hooks.sh || true",
     "build": "node scripts/build.mjs",
     "test": "node scripts/test-all.mjs",
     "test:types": "node ./node_modules/typescript/bin/tsc -p tsconfig.build.json --noEmit",
     "test:node": "node ./node_modules/vitest/vitest.mjs run --reporter=verbose --testTimeout 60000",
-    "test:bun": "bun test --timeout 60000 --preload ./src/test-preload.ts",
-    "test:unit": "CI=true node ./node_modules/vitest/vitest.mjs run --reporter=verbose --testTimeout 60000 test/ && CI=true bun test --timeout 60000 --preload ./src/test-preload.ts test/",
-    "test:package": "node scripts/package-smoke.mjs",
+    "test:unit": "CI=true node ./node_modules/vitest/vitest.mjs run --reporter=verbose --testTimeout 60000 test/",
     "qmd": "tsx src/cli/qmd.ts",
-    "index": "tsx src/cli/qmd.ts index",
-    "vector": "tsx src/cli/qmd.ts vector",
     "search": "tsx src/cli/qmd.ts search",
-    "vsearch": "tsx src/cli/qmd.ts vsearch",
-    "rerank": "tsx src/cli/qmd.ts rerank",
-    "inspector": "npx @modelcontextprotocol/inspector tsx src/cli/qmd.ts mcp",
-    "release": "./scripts/release.sh",
-    "smoke:package-grammars": "node scripts/check-package-grammars.mjs"
-  },
-  "publishConfig": {
-    "access": "public"
+    "vsearch": "tsx src/cli/qmd.ts vsearch"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tobi/qmd.git"
+    "url": "git+https://github.com/dudgeon/qmd-gd.git"
   },
-  "homepage": "https://github.com/tobi/qmd#readme",
+  "homepage": "https://github.com/dudgeon/qmd-gd#readme",
   "bugs": {
-    "url": "https://github.com/tobi/qmd/issues"
+    "url": "https://github.com/dudgeon/qmd-gd/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
     "better-sqlite3": "12.10.0",
     "fast-glob": "3.3.3",
     "node-llama-cpp": "3.18.1",
     "picomatch": "4.0.4",
     "sqlite-vec": "0.1.9",
-    "tree-sitter-go": "0.25.0",
-    "tree-sitter-python": "0.25.0",
-    "tree-sitter-rust": "0.24.0",
-    "tree-sitter-typescript": "0.23.2",
-    "web-tree-sitter": "0.26.8",
     "yaml": "2.9.0",
     "zod": "4.2.1"
   },
@@ -80,22 +62,15 @@
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "tsx": "4.21.0",
+    "typescript": "^5.9.3",
     "vitest": "3.2.4"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
       "esbuild",
-      "node-llama-cpp",
-      "tree-sitter-go",
-      "tree-sitter-javascript",
-      "tree-sitter-python",
-      "tree-sitter-rust",
-      "tree-sitter-typescript"
+      "node-llama-cpp"
     ]
-  },
-  "peerDependencies": {
-    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -111,11 +86,8 @@
     "bm25",
     "embeddings",
     "rag",
-    "mcp",
-    "reranking",
     "knowledge-base",
-    "local-ai",
-    "llm"
+    "local-ai"
   ],
   "author": "Tobi Lutke <tobi@lutke.com>",
   "license": "MIT"

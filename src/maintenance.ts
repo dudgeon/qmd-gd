@@ -37,7 +37,7 @@ export class Maintenance {
     return cleanupOrphanedVectors(this.store.db);
   }
 
-  /** Clear the LLM response cache (query expansion, reranking) */
+  /** Clear the LLM response cache (cached embeddings) */
   clearLLMCache(): number {
     return deleteLLMCache(this.store.db);
   }

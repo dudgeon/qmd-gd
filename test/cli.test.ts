@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { chmod, copyFile, mkdtemp, rm, writeFile, mkdir } from "fs/promises";
-import { existsSync, lstatSync, readFileSync, symlinkSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -15,7 +15,7 @@ import { spawn } from "child_process";
 import { setTimeout as sleep } from "timers/promises";
 import { buildEditorUri, termLink, resolveEmbedModelForCli } from "../src/cli/qmd.ts";
 import { openDatabase } from "../src/db.ts";
-import { DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI } from "../src/llm.ts";
+import { DEFAULT_EMBED_MODEL_URI } from "../src/llm.ts";
 import { setConfigSource } from "../src/collections.ts";
 
 // Test fixtures directory and database path
@@ -265,17 +265,17 @@ describe("CLI Skills", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(stdout).toContain("# QMD - Query Markdown Documents");
-    expect(stdout).toContain("## MCP Tool: `query`");
+    expect(stdout).toContain("## Rank the candidates yourself");
+    expect(stdout).not.toContain("## MCP Tool");
     expect(stdout).not.toContain("This file is a discovery stub");
   });
 
-  test("gets runtime skill with supplementary references", async () => {
+  test("gets full runtime skill content", async () => {
     const { stdout, stderr, exitCode } = await runQmd(["skills", "get", "qmd", "--full"]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(stdout).toContain("# QMD - Query Markdown Documents");
-    expect(stdout).toContain("--- references/mcp-setup.md ---");
-    expect(stdout).toContain("# QMD MCP Server Setup");
+    expect(stdout).toContain("## Pick the right search mode");
   });
 
   test("prints canonical repository skill path", async () => {
@@ -290,26 +290,25 @@ describe("CLI Skills", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(stdout).toContain("# QMD - Query Markdown Documents");
-    expect(stdout).toContain("## MCP Tool: `query`");
+    expect(stdout).toContain("## Rank the candidates yourself");
     expect(stdout).not.toContain("This file is a discovery stub");
   });
 
-  test("legacy skill install writes a qmd skill show bootstrap", async () => {
+  test("local skill install symlinks .claude/skills/qmd to the repo skill", async () => {
     const installDir = join(testDir, "skill-install-target");
     await mkdir(installDir, { recursive: true });
 
     const { stdout, stderr, exitCode } = await runQmd(["skill", "install", "--yes"], { cwd: installDir });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("Installed QMD skill");
+    expect(stdout).toContain("Linked the qmd skill");
 
-    const installedSkillDir = join(installDir, ".agents", "skills", "qmd");
-    const installed = readFileSync(join(installedSkillDir, "SKILL.md"), "utf8");
-    expect(installed).toContain("# QMD - Query Markdown Documents");
-    expect(installed).toContain("!`qmd skill show`");
-    expect(installed).toContain("qmd get");
-    expect(installed).not.toContain("## MCP Tool: `query`");
-    expect(readFileSync(join(installedSkillDir, "references", "mcp-setup.md"), "utf8")).toContain("# QMD MCP Server Setup");
+    const link = join(installDir, ".claude", "skills", "qmd");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    // The symlink points at the repo's real qmd skill (a live link, not a copied stub).
+    expect(readlinkSync(link)).toMatch(/\.claude\/skills\/qmd$/);
+    // The old .agents/skills copy is gone — install is a pure symlink now.
+    expect(existsSync(join(installDir, ".agents"))).toBe(false);
   });
 });
 
@@ -361,7 +360,7 @@ describe("CLI Skill Commands", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("QMD Skill");
     expect(stdout).toContain("name: qmd");
-    expect(stdout).toContain("allowed-tools: Bash(qmd:*), mcp__qmd__*");
+    expect(stdout).toContain("allowed-tools: Bash(qmd:*)");
   });
 
   test("shows skill help with -h", async () => {
@@ -372,23 +371,19 @@ describe("CLI Skill Commands", () => {
     expect(stdout).toContain("--global");
   });
 
-  test("installs the skill into the current project", async () => {
+  test("local install without --yes prints a manual symlink tip", async () => {
     const projectDir = join(testDir, "skill-project");
     await mkdir(projectDir, { recursive: true });
 
     const { stdout, exitCode } = await runQmd(["skill", "install"], { cwd: projectDir });
     expect(exitCode).toBe(0);
-
-    const skillDir = join(projectDir, ".agents", "skills", "qmd");
-    const installed = readFileSync(join(skillDir, "SKILL.md"), "utf-8");
-    expect(installed).toContain("# QMD - Query Markdown Documents");
-    expect(installed).toContain("!`qmd skill show`");
+    // Non-interactive + no --yes: we don't silently create a symlink, we tell the user how.
     expect(existsSync(join(projectDir, ".claude", "skills", "qmd"))).toBe(false);
-    expect(stdout).toContain(`✓ Installed QMD skill to ${skillDir}`);
-    expect(stdout).toContain("Tip: create a Claude symlink manually");
+    expect(existsSync(join(projectDir, ".agents"))).toBe(false);
+    expect(stdout).toContain("ln -s");
   });
 
-  test("installs globally and creates the Claude symlink with --yes", async () => {
+  test("global install symlinks ~/.claude/skills/qmd to the repo skill", async () => {
     const fakeHome = join(testDir, "skill-home");
     await mkdir(fakeHome, { recursive: true });
 
@@ -397,44 +392,31 @@ describe("CLI Skill Commands", () => {
     });
     expect(exitCode).toBe(0);
 
-    const skillDir = join(fakeHome, ".agents", "skills", "qmd");
     const claudeLink = join(fakeHome, ".claude", "skills", "qmd");
-
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("!`qmd skill show`");
     expect(lstatSync(claudeLink).isSymbolicLink()).toBe(true);
-    expect(readFileSync(join(claudeLink, "SKILL.md"), "utf-8")).toContain("!`qmd skill show`");
-    expect(stdout).toContain(`✓ Installed QMD skill to ${skillDir}`);
-    expect(stdout).toContain(`✓ Linked Claude skill at ${claudeLink}`);
+    expect(readlinkSync(claudeLink)).toMatch(/\.claude\/skills\/qmd$/);
+    expect(existsSync(join(fakeHome, ".agents"))).toBe(false);
+    expect(stdout).toContain("Linked the qmd skill");
+    // The ask-qmd skill is installed alongside qmd (qmd-setup is intentionally not).
+    const askLink = join(fakeHome, ".claude", "skills", "ask-qmd");
+    expect(lstatSync(askLink).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(askLink)).toMatch(/\.claude\/skills\/ask-qmd$/);
+    expect(existsSync(join(fakeHome, ".claude", "skills", "qmd-setup"))).toBe(false);
+    expect(stdout).toContain("Linked the ask-qmd skill");
   });
 
-  test("skips Claude qmd symlink when .claude/skills already points to .agents/skills", async () => {
-    const fakeHome = join(testDir, "skill-home-shared");
-    await mkdir(join(fakeHome, ".agents"), { recursive: true });
-    await mkdir(join(fakeHome, ".claude"), { recursive: true });
-    symlinkSync(join(fakeHome, ".agents", "skills"), join(fakeHome, ".claude", "skills"), "dir");
-
-    const { stdout, exitCode } = await runQmd(["skill", "install", "--global", "--yes"], {
-      env: { HOME: fakeHome },
-    });
-    expect(exitCode).toBe(0);
-
-    const skillDir = join(fakeHome, ".agents", "skills", "qmd");
-    expect(lstatSync(skillDir).isSymbolicLink()).toBe(false);
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("!`qmd skill show`");
-    expect(stdout).toContain(`✓ Claude already sees the skill via ${join(fakeHome, ".claude", "skills")}`);
-  });
-
-  test("refuses to overwrite an existing install without --force", async () => {
+  test("refuses to replace a non-symlink skill path without --force", async () => {
     const projectDir = join(testDir, "skill-project-force");
-    await mkdir(projectDir, { recursive: true });
+    await mkdir(join(projectDir, ".claude", "skills", "qmd"), { recursive: true });
 
-    const first = await runQmd(["skill", "install"], { cwd: projectDir });
-    expect(first.exitCode).toBe(0);
+    const blocked = await runQmd(["skill", "install", "--yes"], { cwd: projectDir });
+    expect(blocked.exitCode).toBe(1);
+    expect(blocked.stderr).toContain("already exists");
+    expect(blocked.stderr).toContain("--force");
 
-    const second = await runQmd(["skill", "install"], { cwd: projectDir });
-    expect(second.exitCode).toBe(1);
-    expect(second.stderr).toContain("Skill already exists");
-    expect(second.stderr).toContain("--force");
+    const forced = await runQmd(["skill", "install", "--yes", "--force"], { cwd: projectDir });
+    expect(forced.exitCode).toBe(0);
+    expect(lstatSync(join(projectDir, ".claude", "skills", "qmd")).isSymbolicLink()).toBe(true);
   });
 });
 
@@ -497,12 +479,50 @@ describe("CLI Add Command", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Collection 'fixtures' created successfully");
   });
+
+  test("collection list --json reports scope (includeByDefault) for the playground", async () => {
+    await runQmd(["collection", "add", "."]);
+
+    const listed = await runQmd(["collection", "list", "--json"]);
+    expect(listed.exitCode).toBe(0);
+    const cols = JSON.parse(listed.stdout.trim());
+    expect(Array.isArray(cols)).toBe(true);
+    const fixtures = cols.find((col: { name: string }) => col.name === "fixtures");
+    expect(fixtures).toBeTruthy();
+    expect(fixtures.includeByDefault).toBe(true);
+    expect(typeof fixtures.docCount).toBe("number");
+    expect(fixtures.pattern).toBeTruthy();
+
+    // Excluding flips the scope flag the playground reads.
+    await runQmd(["collection", "exclude", "fixtures"]);
+    const after = await runQmd(["collection", "list", "--json"]);
+    const excluded = JSON.parse(after.stdout.trim()).find((col: { name: string }) => col.name === "fixtures");
+    expect(excluded.includeByDefault).toBe(false);
+  });
 });
 
 describe("CLI Status Command", () => {
   beforeEach(async () => {
     // Ensure we have indexed files
     await runQmd(["collection", "add", "."]);
+  });
+
+  test("status --json reports index health for the dashboard", async () => {
+    const { stdout, exitCode } = await runQmd(["status", "--json"]);
+    expect(exitCode).toBe(0);
+    const st = JSON.parse(stdout.trim());
+    expect(typeof st.totalDocuments).toBe("number");
+    expect(typeof st.vectorsEmbedded).toBe("number");
+    expect(typeof st.needsEmbedding).toBe("number");
+    expect(typeof st.sizeBytes).toBe("number");
+    expect(st.embedModel).toBeTruthy();
+    expect(st).toHaveProperty("lastIndexedAt");
+    expect(st).toHaveProperty("lastEmbeddedAt");
+    expect(Array.isArray(st.collections)).toBe(true);
+    const fixtures = st.collections.find((col: { name: string }) => col.name === "fixtures");
+    expect(fixtures).toBeTruthy();
+    expect(fixtures.includeByDefault).toBe(true);
+    expect(typeof fixtures.documents).toBe("number");
   });
 
   test("qmd doctor reports core index health checks", async () => {
@@ -528,8 +548,6 @@ describe("CLI Status Command", () => {
     const configText = readFileSync(join(testConfigDir, "index.yml"), "utf-8");
     expect(configText).toContain("models:");
     expect(configText).toContain(DEFAULT_EMBED_MODEL_URI);
-    expect(configText).toContain(DEFAULT_GENERATE_MODEL_URI);
-    expect(configText).toContain(DEFAULT_RERANK_MODEL_URI);
   }, 20000);
 
   test("qmd doctor warns when no collections are configured", async () => {
@@ -555,7 +573,7 @@ describe("CLI Status Command", () => {
 
   test("qmd doctor warns when configured models differ from code defaults", async () => {
     const env = await createIsolatedTestEnv("doctor-custom-models");
-    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: hf:example/custom-embed/custom.gguf\n  generate: ${DEFAULT_GENERATE_MODEL_URI}\n  rerank: ${DEFAULT_RERANK_MODEL_URI}\n`);
+    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: hf:example/custom-embed/custom.gguf\n`);
 
     const { stdout, exitCode } = await runQmd(["doctor"], { dbPath: env.dbPath, configDir: env.configDir });
     expect(exitCode).toBe(0);
@@ -669,8 +687,6 @@ describe("CLI Status Command", () => {
       QMD_FORCE_CPU: "1",
       QMD_LLAMA_GPU: "metal",
       QMD_EMBED_PARALLELISM: "2",
-      QMD_EXPAND_CONTEXT_SIZE: "4096",
-      QMD_RERANK_CONTEXT_SIZE: "8192",
       QMD_EMBED_CONTEXT_SIZE: "1024",
       QMD_EDITOR_URI: "vscode://file/{file}:{line}:{col}",
       QMD_SKILLS_DIR: "/tmp/qmd-skills",
@@ -2137,370 +2153,3 @@ describe("status and collection list hide filesystem paths", () => {
   });
 });
 
-// =============================================================================
-// MCP HTTP Daemon Lifecycle
-// =============================================================================
-
-describe("mcp http daemon", () => {
-  let daemonTestDir: string;
-  let daemonCacheDir: string; // XDG_CACHE_HOME value (the qmd/ subdir is created automatically)
-  let daemonDbPath: string;
-  let daemonConfigDir: string;
-
-  // Track spawned PIDs for cleanup
-  const spawnedPids: number[] = [];
-
-  /** Get path to PID file inside the test cache dir */
-  function pidPath(): string {
-    return join(daemonCacheDir, "qmd", "mcp.pid");
-  }
-
-  /** Run qmd with test-isolated env (cache, db, config) */
-  async function runDaemonQmd(
-    args: string[],
-  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    return runQmd(args, {
-      dbPath: daemonDbPath,
-      configDir: daemonConfigDir,
-      env: { XDG_CACHE_HOME: daemonCacheDir },
-    });
-  }
-
-  /** Spawn a foreground HTTP server (non-blocking) and return the process */
-  function spawnHttpServer(
-    port: number,
-    options: { args?: string[]; env?: Record<string, string> } = {},
-  ): import("child_process").ChildProcess {
-    const runner = qmdRunnerArgs([...(options.args ?? []), "mcp", "--http", "--port", String(port)]);
-    const proc = spawn(runner.command, runner.args, {
-      cwd: fixturesDir,
-      env: {
-        ...process.env,
-        INDEX_PATH: daemonDbPath,
-        QMD_CONFIG_DIR: daemonConfigDir,
-        PWD: fixturesDir,
-        ...options.env,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (proc.pid) spawnedPids.push(proc.pid);
-    return proc;
-  }
-
-  /** Wait for HTTP server to become ready */
-  async function waitForServer(port: number, timeoutMs = 5000): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`http://localhost:${port}/health`);
-        if (res.ok) return true;
-      } catch { /* not ready yet */ }
-      await sleep(200);
-    }
-    return false;
-  }
-
-  /** Pick a random high port unlikely to conflict */
-  function randomPort(): number {
-    return 10000 + Math.floor(Math.random() * 50000);
-  }
-
-  beforeAll(async () => {
-    daemonTestDir = await mkdtemp(join(tmpdir(), "qmd-daemon-test-"));
-    daemonCacheDir = join(daemonTestDir, "cache");
-    daemonDbPath = join(daemonTestDir, "test.sqlite");
-    daemonConfigDir = join(daemonTestDir, "config");
-
-    await mkdir(join(daemonCacheDir, "qmd"), { recursive: true });
-    await mkdir(daemonConfigDir, { recursive: true });
-    await writeFile(join(daemonConfigDir, "index.yml"), "collections: {}\n");
-  });
-
-  afterAll(async () => {
-    // Kill any leftover spawned processes
-    for (const pid of spawnedPids) {
-      try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
-    }
-    // Also clean up via PID file if present
-    try {
-      const pf = pidPath();
-      if (existsSync(pf)) {
-        const pid = parseInt(readFileSync(pf, "utf-8").trim());
-        try { process.kill(pid, "SIGTERM"); } catch {}
-        unlinkSync(pf);
-      }
-    } catch {}
-
-    await rm(daemonTestDir, { recursive: true, force: true });
-  });
-
-  // -------------------------------------------------------------------------
-  // Foreground HTTP
-  // -------------------------------------------------------------------------
-
-  test("foreground HTTP server starts and responds to health check", async () => {
-    const port = randomPort();
-    const proc = spawnHttpServer(port);
-
-    try {
-      const ready = await waitForServer(port);
-      expect(ready).toBe(true);
-
-      const res = await fetch(`http://localhost:${port}/health`);
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.status).toBe("ok");
-    } finally {
-      const closed = new Promise(r => proc.once("close", r));
-      proc.kill("SIGTERM");
-      await closed;
-    }
-  });
-
-  test("foreground HTTP server honors --index when selecting the store", async () => {
-    const customIndex = "mcp-alt-index";
-    const customCacheDir = join(daemonTestDir, `cache-index-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const customConfigDir = join(daemonTestDir, `config-index-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    await mkdir(customCacheDir, { recursive: true });
-    await mkdir(customConfigDir, { recursive: true });
-
-    const addResult = await runQmd(
-      ["--index", customIndex, "collection", "add", fixturesDir, "--name", "mcp-fixtures"],
-      {
-        dbPath: daemonDbPath,
-        configDir: customConfigDir,
-        env: {
-          INDEX_PATH: "",
-          XDG_CACHE_HOME: customCacheDir,
-        },
-      },
-    );
-    expect(addResult.exitCode).toBe(0);
-
-    const updateResult = await runQmd(
-      ["--index", customIndex, "update"],
-      {
-        dbPath: daemonDbPath,
-        configDir: customConfigDir,
-        env: {
-          INDEX_PATH: "",
-          XDG_CACHE_HOME: customCacheDir,
-        },
-      },
-    );
-    expect(updateResult.exitCode).toBe(0);
-
-    const port = randomPort();
-    const proc = spawnHttpServer(port, {
-      args: ["--index", customIndex],
-      env: {
-        INDEX_PATH: "",
-        XDG_CACHE_HOME: customCacheDir,
-        QMD_CONFIG_DIR: customConfigDir,
-      },
-    });
-
-    try {
-      const ready = await waitForServer(port);
-      expect(ready).toBe(true);
-
-      const res = await fetch(`http://localhost:${port}/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ searches: [{ type: "lex", query: "authentication" }], limit: 5, rerank: false }),
-      });
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      const files = body.results.map((r: { file: string }) => r.file);
-      expect(files.some((file: string) => file.includes("mcp-fixtures/notes/meeting.md"))).toBe(true);
-    } finally {
-      const closed = new Promise(r => proc.once("close", r));
-      proc.kill("SIGTERM");
-      await closed;
-    }
-  }, 10000);
-
-  // -------------------------------------------------------------------------
-  // Daemon lifecycle
-  // -------------------------------------------------------------------------
-
-  test("--daemon writes PID file and starts server", async () => {
-    const port = randomPort();
-    const { stdout, exitCode } = await runDaemonQmd([
-      "mcp", "--http", "--daemon", "--port", String(port),
-    ]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain(`http://localhost:${port}/mcp`);
-
-    // PID file should exist
-    expect(existsSync(pidPath())).toBe(true);
-
-    const pid = parseInt(readFileSync(pidPath(), "utf-8").trim());
-    spawnedPids.push(pid);
-
-    // Server should be reachable
-    const ready = await waitForServer(port);
-    expect(ready).toBe(true);
-
-    // Clean up
-    process.kill(pid, "SIGTERM");
-    await sleep(500);
-    try { unlinkSync(pidPath()); } catch {}
-  });
-
-  test("stop kills daemon and removes PID file", async () => {
-    const port = randomPort();
-    // Start daemon
-    const { exitCode: startCode } = await runDaemonQmd([
-      "mcp", "--http", "--daemon", "--port", String(port),
-    ]);
-    expect(startCode).toBe(0);
-
-    const pid = parseInt(readFileSync(pidPath(), "utf-8").trim());
-    spawnedPids.push(pid);
-
-    await waitForServer(port);
-
-    // Stop it
-    const { stdout: stopOut, exitCode: stopCode } = await runDaemonQmd(["mcp", "stop"]);
-    expect(stopCode).toBe(0);
-    expect(stopOut).toContain("Stopped");
-
-    // PID file should be gone
-    expect(existsSync(pidPath())).toBe(false);
-
-    // Process should be dead
-    await sleep(500);
-    expect(() => process.kill(pid, 0)).toThrow();
-  });
-
-  test("stop handles dead PID gracefully (cleans stale file)", async () => {
-    // Write a PID file pointing to a dead process
-    writeFileSync(pidPath(), "999999999");
-
-    const { stdout, exitCode } = await runDaemonQmd(["mcp", "stop"]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("stale");
-
-    // PID file should be cleaned up
-    expect(existsSync(pidPath())).toBe(false);
-  });
-
-  test("--daemon rejects if already running", async () => {
-    const port = randomPort();
-    // Start first daemon
-    const { exitCode: firstCode } = await runDaemonQmd([
-      "mcp", "--http", "--daemon", "--port", String(port),
-    ]);
-    expect(firstCode).toBe(0);
-
-    const pid = parseInt(readFileSync(pidPath(), "utf-8").trim());
-    spawnedPids.push(pid);
-
-    await waitForServer(port);
-
-    // Try to start second daemon — should fail
-    const { stderr, exitCode } = await runDaemonQmd([
-      "mcp", "--http", "--daemon", "--port", String(port + 1),
-    ]);
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("Already running");
-
-    // Clean up first daemon
-    process.kill(pid, "SIGTERM");
-    await sleep(500);
-    try { unlinkSync(pidPath()); } catch {}
-  });
-
-  test("--daemon cleans stale PID file and starts fresh", async () => {
-    // Write a stale PID file
-    writeFileSync(pidPath(), "999999999");
-
-    const port = randomPort();
-    const { exitCode, stdout } = await runDaemonQmd([
-      "mcp", "--http", "--daemon", "--port", String(port),
-    ]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain(`http://localhost:${port}/mcp`);
-
-    const pid = parseInt(readFileSync(pidPath(), "utf-8").trim());
-    spawnedPids.push(pid);
-    expect(pid).not.toBe(999999999);
-
-    // Clean up
-    const ready = await waitForServer(port);
-    expect(ready).toBe(true);
-    process.kill(pid, "SIGTERM");
-    await sleep(500);
-    try { unlinkSync(pidPath()); } catch {}
-  });
-});
-
-// =============================================================================
-// MCP stdio stdout hygiene
-// =============================================================================
-
-describe("mcp stdio launcher", () => {
-  test("sets native llama/ggml quiet env before Node starts so stdout stays JSON-RPC only", async () => {
-    const tempPackage = await mkdtemp(join(tmpdir(), "qmd-bin-mcp-"));
-    try {
-      await mkdir(join(tempPackage, "bin"), { recursive: true });
-      await mkdir(join(tempPackage, "dist", "cli"), { recursive: true });
-      await writeFile(join(tempPackage, "dist", "cli", "qmd.js"), "// fixture\n");
-      await mkdir(join(tempPackage, "fake-bin"), { recursive: true });
-
-      const qmdBin = join(tempPackage, "bin", "qmd");
-      await copyFile(join(projectRoot, "bin", "qmd"), qmdBin);
-      await chmod(qmdBin, 0o755);
-
-      // Force the wrapper down the Node branch, then put our fake `node` first
-      // in PATH. The fake node behaves like the native llama/ggml layer: it
-      // writes a non-JSON stdout line unless qmd pre-seeded the documented
-      // quiet env vars before launching JS.
-      await writeFile(join(tempPackage, "package-lock.json"), "{}\n");
-      const fakeNode = join(tempPackage, "fake-bin", "node");
-      await writeFile(fakeNode, `#!/bin/sh
-if [ "$(basename "$1")" = "qmd" ]; then
-  exec "${process.execPath}" "$@"
-else
-  if [ "\${GGML_BACKEND_SILENT:-}" != "1" ]; then
-    printf 'llama.cpp native log on stdout\\n'
-  fi
-  printf '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\\n'
-fi
-`);
-      await chmod(fakeNode, 0o755);
-
-      const proc = spawn(qmdBin, ["mcp"], {
-        cwd: tempPackage,
-        env: {
-          ...process.env,
-          PATH: `${join(tempPackage, "fake-bin")}:${process.env.PATH}`,
-          LLAMA_LOG_LEVEL: "",
-          GGML_LOG_LEVEL: "",
-          GGML_BACKEND_SILENT: "",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-      let stdout = "";
-      let stderr = "";
-      proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-      const exitCode = await new Promise<number>((resolve, reject) => {
-        proc.once("error", reject);
-        proc.on("close", (code) => resolve(code ?? 1));
-      });
-
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
-      const lines = stdout.trim().split("\n").filter(Boolean);
-      expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) {
-        expect(() => JSON.parse(line)).not.toThrow();
-      }
-    } finally {
-      await rm(tempPackage, { recursive: true, force: true });
-    }
-  });
-});

@@ -160,7 +160,9 @@ describe("bin/qmd package wrapper", () => {
     expect(result.scriptPath).toBe(realpathSync(join(packageRoot, "dist", "cli", "qmd.js")));
   });
 
-  test("bun global symlink uses bun when package-local bun lockfile exists", () => {
+  test("bun-installed global package still launches under node (Node-only)", () => {
+    // qmd-gd is Node-only: even a package installed via bun routes through node
+    // and runs dist/cli/qmd.js.
     const { root, runtimeBin, capturePath } = makeTempFixture();
     const packageRoot = makePackage(root, "home/user/.bun/install/global/node_modules/@tobilu/qmd", ["bun.lock"]);
     const bunBin = join(root, "home", "user", ".bun", "bin", "qmd");
@@ -168,20 +170,7 @@ describe("bin/qmd package wrapper", () => {
 
     const result = runWrapper(bunBin, runtimeBin, capturePath);
 
-    expect(result.runtime).toBe("bun");
-    expect(result.scriptPath).toBe(realpathSync(join(packageRoot, "dist", "cli", "qmd.js")));
-  });
-
-  test("bun global install with bun.lock at the install root uses bun", () => {
-    const { root, runtimeBin, capturePath } = makeTempFixture();
-    const packageRoot = makePackage(root, "home/user/.bun/install/global/node_modules/@tobilu/qmd");
-    writeFileSync(join(root, "home", "user", ".bun", "install", "global", "bun.lock"), "");
-    const bunBin = join(root, "home", "user", ".bun", "bin", "qmd");
-    symlinkRelative(join(packageRoot, "bin", "qmd"), bunBin);
-
-    const result = runWrapper(bunBin, runtimeBin, capturePath);
-
-    expect(result.runtime).toBe("bun");
+    expect(result.runtime).toBe("node");
     expect(result.scriptPath).toBe(realpathSync(join(packageRoot, "dist", "cli", "qmd.js")));
   });
 
@@ -221,22 +210,24 @@ describe("bin/qmd package wrapper", () => {
 
   test("packaged tree uses dist even if source files are present", () => {
     const { root, runtimeBin, capturePath } = makeTempFixture();
-    const packageRoot = makePackage(root, "node_modules/@tobilu/qmd", ["bun.lock"], { source: true });
+    const packageRoot = makePackage(root, "node_modules/@tobilu/qmd", [], { source: true });
 
     const result = runWrapper(join(packageRoot, "bin", "qmd"), runtimeBin, capturePath);
 
-    expect(result.runtime).toBe("bun");
+    expect(result.runtime).toBe("node");
     expect(result.scriptPath).toBe(realpathSync(join(packageRoot, "dist", "cli", "qmd.js")));
   });
 
-  test("prefers source with bun in a Bun checkout even when dist exists", () => {
+  test("checkout without tsx falls back to dist under node", () => {
+    // Source mode requires tsx (Node-only). A git checkout that has source but
+    // no tsx installed runs the compiled dist entry under node.
     const { root, runtimeBin, capturePath } = makeTempFixture();
-    const packageRoot = makePackage(root, "qmd", ["bun.lock"], { source: true, git: true });
+    const packageRoot = makePackage(root, "qmd", [], { source: true, git: true });
 
     const result = runWrapper(join(packageRoot, "bin", "qmd"), runtimeBin, capturePath);
 
-    expect(result.runtime).toBe("bun");
-    expect(result.scriptPath).toBe(realpathSync(join(packageRoot, "src", "cli", "qmd.ts")));
+    expect(result.runtime).toBe("node");
+    expect(result.scriptPath).toBe(realpathSync(join(packageRoot, "dist", "cli", "qmd.js")));
     expect(result.args).toEqual(["--version"]);
   });
 
@@ -251,13 +242,11 @@ describe("bin/qmd package wrapper", () => {
     expect(result.args).toEqual([realpathSync(join(packageRoot, "src", "cli", "qmd.ts")), "--version"]);
   });
 
-  test("source checkout with both bun.lock and package-lock.json prefers node+tsx", () => {
-    // Mirrors the dist-mode "npm priority" rule: a working tree that has both
-    // lockfiles (because the user ran `npm install` against a repo that also
-    // ships bun.lock) installed native modules for Node's ABI, so source mode
-    // must route through tsx to avoid better-sqlite3 / sqlite-vec mismatches.
+  test("source checkout with lockfiles present still routes through node+tsx", () => {
+    // Node-only: regardless of which lockfiles are present, a git checkout with
+    // tsx installed runs the TypeScript entry via tsx under node.
     const { root, runtimeBin, capturePath } = makeTempFixture();
-    const packageRoot = makePackage(root, "qmd", ["bun.lock", "package-lock.json"], { source: true, tsx: true, git: true });
+    const packageRoot = makePackage(root, "qmd", ["package-lock.json"], { source: true, tsx: true, git: true });
 
     const result = runWrapper(join(packageRoot, "bin", "qmd"), runtimeBin, capturePath);
 
@@ -281,7 +270,6 @@ describe("bin/qmd package wrapper", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("qmd is not built");
-    expect(result.stderr).toContain("bun install && bun run build");
     expect(result.stderr).toContain("npm install && npm run build");
     expect(result.stderr).toContain("qmd doctor");
   });

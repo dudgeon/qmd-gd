@@ -1,24 +1,34 @@
-# QMD - Query Markup Documents
+# qmd-gd — Query Markup Documents
 
 An on-device search engine for everything you need to remember. Index your markdown notes, meeting transcripts, documentation, and knowledge bases. Search with keywords or natural language. Ideal for your agentic flows.
 
-QMD combines BM25 full-text search, vector semantic search, and LLM re-ranking—all running locally via node-llama-cpp with GGUF models.
+**qmd-gd** is a fork of [qmd](https://github.com/tobi/qmd) reworked for locked-down environments that forbid MCP servers and local generative-LLM inference. It combines BM25 full-text search and on-device vector semantic search (RRF fusion), running locally via a single **embedding** model. There is **no MCP server** and **no local generative model**: query expansion and reranking are delegated to the calling Claude agent, which authors `lex:/vec:/hyde:` queries and ranks the returned candidates itself. qmd-gd never invokes Claude and never runs `claude -p`. See [`docs/adr/`](docs/adr/) for the rationale.
 
-![QMD Architecture](assets/qmd-architecture.png)
+You can read more about qmd-gd's progress in the [CHANGELOG](CHANGELOG.md).
 
-You can read more about QMD's progress in the [CHANGELOG](CHANGELOG.md).
+## Get started (recommended for non-developers)
 
-## Quick Start
+qmd-gd is a **skills folder**, not a Claude Code plugin — there is nothing to install *into*
+Claude Code.
+
+1. On GitHub, click **Code → Download ZIP** and unzip it somewhere stable (e.g. `~/repos/qmd-gd`).
+2. Open a terminal in that folder and start Claude Code (`claude`).
+3. Say **"help me get set up"** (or run `/qmd-setup`). The bundled `qmd-setup` skill —
+   auto-discovered because you opened this folder — walks you through building the CLI, adding
+   folders to search, indexing, embedding, and (optionally) scheduling refresh. It prints each
+   command for *you* to run; it never installs or downloads anything itself.
+
+> Why it just works: the `qmd` and `qmd-setup` skills live under `.claude/skills/` in the repo,
+> which Claude Code auto-discovers when opened here. To use the `qmd` and `ask-qmd` skills from your
+> *other* projects too, run `qmd skill install --global` (live symlinks into `~/.claude/skills/{qmd,ask-qmd}`).
+
+## Quick Start (developers)
 
 ```sh
-# Install globally (Node or Bun)
-npm install -g @tobilu/qmd
-# or
-bun install -g @tobilu/qmd
-
-# Or run directly
-npx @tobilu/qmd ...
-bunx @tobilu/qmd ...
+# qmd-gd is a skills folder — clone OR download the repo ZIP from GitHub, then build.
+# Runs on Node (>=22). Non-developers: see "Get started" above and just say "help me get set up".
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd   # or: download the ZIP from GitHub and unzip
+npm install && npm run build && npm link   # exposes `qmd` globally
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -36,7 +46,7 @@ qmd embed
 # Search across everything
 qmd search "project timeline"           # Fast keyword search
 qmd vsearch "how to deploy"             # Semantic search
-qmd query "quarterly planning process"  # Hybrid + reranking (best quality)
+qmd query "quarterly planning process"  # Hybrid BM25 + vector (RRF); you rank the candidates
 
 # Get a specific document
 qmd get "meetings/2024-01-15.md"
@@ -69,115 +79,74 @@ qmd query "error handling" --all --files --min-score 0.4
 qmd get "docs/api-reference.md" --full
 ```
 
-### MCP Server
+### Using with Claude Code / agents (no MCP)
 
-Although the tool works perfectly fine when you just tell your agent to use it on the command line, it also exposes an MCP (Model Context Protocol) server for tighter integration.
-
-**Tools exposed:**
-- `query` — Search with typed sub-queries (`lex`/`vec`/`hyde`), combined via RRF + reranking
-- `get` — Retrieve a document by path or docid (with fuzzy matching suggestions)
-- `multi_get` — Batch retrieve by glob pattern, comma-separated list, or docids
-- `status` — Index health and collection info
-
-**Claude Desktop configuration** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "qmd": {
-      "command": "qmd",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-**Claude Code** — Install the plugin (recommended):
+qmd-gd has **no MCP server and no Claude Code plugin** — the CLI *is* the interface, and the
+skills are plain folders under `.claude/skills/`. Opening this repo in Claude Code auto-loads
+the `qmd` and `ask-qmd` skills. To use them from your *other* projects too, symlink them into
+your user skills:
 
 ```bash
-claude plugin marketplace add tobi/qmd
-claude plugin install qmd@qmd
+qmd skill install --global   # live symlinks: ~/.claude/skills/{qmd,ask-qmd} -> this checkout
 ```
 
-Or configure MCP manually in `~/.claude/settings.json`:
+(First time on a machine? Open this folder in Claude Code and say "help me get set up" — the
+`qmd-setup` skill sequences build/link → add collections → set the default ask scope → index →
+embed → verify.)
 
-```json
-{
-  "mcpServers": {
-    "qmd": {
-      "command": "qmd",
-      "args": ["mcp"]
-    }
-  }
-}
+Once set up, the quickest path is the **`/ask-qmd`** skill — ask a question, get a cited answer
+from your default-scoped knowledge base, no flags to remember:
+
+```
+/ask-qmd what were the takeaways from the last QBR meeting?
 ```
 
-#### HTTP Transport
+It picks **instant keyword search** for exact-word questions (names, titles, IDs — or when you
+say "quick") and **thorough hybrid search** for conceptual ones, reads the top sources, and
+answers with citations. **In Duo** it then offers to open the top source and scroll to / highlight
+the answer span. The scope is whatever you marked default-included at setup
+(`qmd collection include/exclude`). If you run setup inside Duo, it also opens a **qmd dashboard**
+— an Atelier-styled canvas showing index status (doc/vector counts, last indexed/embedded,
+pending embedding, size), what `/ask-qmd` searches, and a short "how qmd works" explainer — with
+**Change scope** (spawns a Claude tab to retune `include`/`exclude`) and **Refresh index**
+buttons. Under the hood `/ask-qmd` runs the same loop the `qmd` skill teaches:
 
-By default, QMD's MCP server uses stdio (launched as a subprocess by each client). For a shared, long-lived server that avoids repeated model loading, use the HTTP transport:
+The skill teaches the agent-driven loop: **author a structured query → retrieve →
+rank the candidates yourself.** qmd-gd does no query expansion or reranking with a
+local model — the agent supplies the `lex:/vec:/hyde:` variants and judges the
+returned candidates (optionally via a Haiku subagent through the Task tool — never
+`claude -p`):
 
 ```sh
-# Foreground (Ctrl-C to stop)
-qmd mcp --http                    # localhost:8181
-qmd mcp --http --port 8080        # custom port
-qmd mcp --http --host 0.0.0.0     # bind all interfaces (e.g. container probes)
+# Author the query yourself; qmd-gd embeds + retrieves + fuses (RRF) and returns candidates.
+qmd query --format json $'intent: what to find and what to avoid\nlex: exact terms titles symbols\nvec: natural-language paraphrase\nhyde: a hypothetical passage that would answer this'
 
-# Background daemon
-qmd mcp --http --daemon           # start, writes PID to ~/.cache/qmd/mcp.pid
-qmd mcp stop                      # stop via PID file
-qmd status                        # shows "MCP: running (PID ...)" when active
+# Then read/rank the candidates and pull the winners:
+qmd get "#abc123:120:40"
 ```
 
-The server binds to `localhost` by default. Pass `--host` (or set the `QMD_HOST`
-environment variable) to override — `--host 0.0.0.0` is useful when the server
-runs in a container and a liveness probe connects from a non-loopback address.
-
-The HTTP server exposes two endpoints:
-- `POST /mcp` — MCP Streamable HTTP (JSON responses, stateless)
-- `GET /health` — liveness check with uptime
-
-LLM models stay loaded in VRAM across requests. Embedding/reranking contexts are disposed after 5 min idle and transparently recreated on the next request (~1s penalty, models remain loaded).
-
-Point any MCP client at `http://localhost:8181/mcp` to connect.
-
-#### MCP Tool Parameters
-
-| Tool | Parameter | Type | Notes |
-|------|-----------|------|-------|
-| `query` | `searches` | array | Typed sub-queries (`lex`/`vec`/`hyde`), 1–10. **Required.** First gets 2x weight. |
-| `query` | `collections` | string[] | Filter by collection names (OR). **Array only** — singular `collection` is silently ignored. |
-| `query` | `intent` | string | Disambiguation context (does not search on its own) |
-| `query` | `limit` | number | Max results (default 10) |
-| `query` | `minScore` | number | Minimum relevance 0–1 (default 0) |
-| `query` | `candidateLimit` | number | Max candidates to rerank (default 40) |
-| `query` | `rerank` | boolean | Run LLM reranking (default **true**); set false for RRF-only |
-| `get` | `file` | string | Path, docid (`#abc123`), or `path:from:count` (e.g. `#abc123:120:40`) |
-| `get` | `fromLine` | number | Start line (1-indexed); overrides the `:from` suffix |
-| `get` | `maxLines` | number | Limit returned lines |
-| `get` | `lineNumbers` | boolean | Prefix lines with numbers (default **true**) |
-| `multi_get` | `pattern` | string | Glob pattern or comma-separated list |
-| `multi_get` | `maxBytes` | number | Skip files larger than N (default 10240) |
-| `multi_get` | `maxLines` | number | Limit lines per file |
-| `multi_get` | `lineNumbers` | boolean | Prefix lines with numbers (default **true**) |
-
-Unknown parameters are silently ignored (not rejected) — double-check names if
-results seem unscoped. The HTTP `/query` and `/search` endpoints return
-`qmd://collection/path` URIs in the `file` field, matching the CLI and MCP output.
+If the local embedding model is unavailable (e.g. a sandbox blocks it at query time),
+fall back to `qmd search` — pure BM25, zero inference.
 
 ### SDK / Library Usage
 
-Use QMD as a library in your own Node.js or Bun applications.
+Use QMD as a library in your own Node.js applications.
 
 #### Installation
 
+qmd-gd is a private fork and is **not published to npm**. Install it from the
+checkout and depend on it locally (e.g. `npm install /path/to/qmd-gd`, or add a
+`file:` dependency in your `package.json`).
+
 ```sh
-npm install @tobilu/qmd
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
+npm install && npm run build
 ```
 
 #### Quick Start
 
 ```typescript
-import { createStore } from '@tobilu/qmd'
+import { createStore } from 'qmd-gd'
 
 const store = await createStore({
   dbPath: './my-index.sqlite',
@@ -199,7 +168,7 @@ await store.close()
 `createStore()` accepts three modes:
 
 ```typescript
-import { createStore } from '@tobilu/qmd'
+import { createStore } from 'qmd-gd'
 
 // 1. Inline config — no files needed besides the DB
 const store = await createStore({
@@ -224,10 +193,10 @@ const store3 = await createStore({ dbPath: './index.sqlite' })
 
 #### Search
 
-The unified `search()` method handles both simple queries and pre-expanded structured queries:
+The unified `search()` method handles both simple queries and agent-authored structured queries:
 
 ```typescript
-// Simple query — auto-expanded via LLM, then BM25 + vector + reranking
+// Simple query — seeds BM25 + vector retrieval (no generative expansion); returns RRF candidates
 const results = await store.search({ query: "authentication flow" })
 
 // With options
@@ -240,7 +209,7 @@ const results2 = await store.search({
   explain: true,
 })
 
-// Pre-expanded queries — skip auto-expansion, control each sub-query
+// Structured queries — you author each sub-query (the agent does the expansion)
 const results3 = await store.search({
   queries: [
     { type: 'lex', query: '"connection pool" timeout -redis' },
@@ -248,9 +217,6 @@ const results3 = await store.search({
   ],
   collections: ["docs", "notes"],
 })
-
-// Skip reranking for faster results
-const fast = await store.search({ query: "auth", rerank: false })
 ```
 
 For direct backend access:
@@ -262,9 +228,7 @@ const lexResults = await store.searchLex("auth middleware", { limit: 10 })
 // Vector similarity search (embedding model, no reranking)
 const vecResults = await store.searchVector("how users log in", { limit: 10 })
 
-// Manual query expansion for full control
-const expanded = await store.expandQuery("auth flow", { intent: "user login" })
-const results4 = await store.search({ queries: expanded })
+// Author your own typed sub-queries and pass them to search({ queries: [...] }).
 ```
 
 #### Retrieval
@@ -347,7 +311,6 @@ const result = await store.update({
 // Generate vector embeddings
 const embedResult = await store.embed({
   force: false,           // true to re-embed everything
-  chunkStrategy: "auto",  // "regex" (default) or "auto" (AST for code files)
   onProgress: ({ current, total, collection }) => {
     console.log(`Embedding ${current}/${total}`)
   },
@@ -378,7 +341,7 @@ import type {
   CollectionConfig,    // Inline config shape
   IndexStatus,         // From getStatus()
   IndexHealthInfo,     // From getIndexHealth()
-} from '@tobilu/qmd'
+} from 'qmd-gd'
 ```
 
 Utility exports:
@@ -389,13 +352,13 @@ import {
   addLineNumbers,              // Add line numbers to text
   DEFAULT_MULTI_GET_MAX_BYTES, // Default max file size for multiGet (64KB)
   Maintenance,                 // Database maintenance operations
-} from '@tobilu/qmd'
+} from 'qmd-gd'
 ```
 
 #### Lifecycle
 
 ```typescript
-// Close the store — disposes LLM models and DB connection
+// Close the store — disposes the embedding model + DB connection
 await store.close()
 ```
 
@@ -403,64 +366,43 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 
 ## Architecture
 
+> **qmd-gd note:** qmd-gd is retrieval-only. It runs a single local model — the
+> **embedding** model — and never performs query expansion or LLM re-ranking. The
+> calling agent authors the typed `lex:/vec:/hyde:` sub-queries and ranks the
+> returned candidates itself. The upstream `rerank`/`expandQuery`/`chunkStrategy`
+> surface has been removed (not stubbed). See
+> [`docs/adr/0002`](docs/adr/0002-delegate-generative-steps-to-the-agent.md) and
+> [`0006`](docs/adr/0006-remove-vestigial-generative-surface.md).
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         QMD Hybrid Search Pipeline                          │
+│                      qmd-gd Hybrid Retrieval Pipeline                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                               ┌─────────────────┐
-                              │   User Query    │
+                              │      Query      │
+                              │ (you author the │
+                              │  sub-queries)   │
                               └────────┬────────┘
                                        │
                         ┌──────────────┴──────────────┐
                         ▼                             ▼
-               ┌────────────────┐            ┌────────────────┐
-               │ Query Expansion│            │  Original Query│
-               │  (fine-tuned)  │            │   (×2 weight)  │
-               └───────┬────────┘            └───────┬────────┘
-                       │                             │
-                       │ 2 alternative queries       │
-                       └──────────────┬──────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              ▼                       ▼                       ▼
-     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-     │ Original Query  │     │ Expanded Query 1│     │ Expanded Query 2│
-     └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
-              │                       │                       │
-      ┌───────┴───────┐       ┌───────┴───────┐       ┌───────┴───────┐
-      ▼               ▼       ▼               ▼       ▼               ▼
-  ┌───────┐       ┌───────┐ ┌───────┐     ┌───────┐ ┌───────┐     ┌───────┐
-  │ BM25  │       │Vector │ │ BM25  │     │Vector │ │ BM25  │     │Vector │
-  │(FTS5) │       │Search │ │(FTS5) │     │Search │ │(FTS5) │     │Search │
-  └───┬───┘       └───┬───┘ └───┬───┘     └───┬───┘ └───┬───┘     └───┬───┘
-      │               │         │             │         │             │
-      └───────┬───────┘         └──────┬──────┘         └──────┬──────┘
-              │                        │                       │
-              └────────────────────────┼───────────────────────┘
-                                       │
-                                       ▼
-                          ┌───────────────────────┐
-                          │   RRF Fusion + Bonus  │
-                          │  Original query: ×2   │
-                          │  Top-rank bonus: +0.05│
-                          │     Top 30 Kept       │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │    LLM Re-ranking     │
-                          │  (qwen3-reranker)     │
-                          │  Yes/No + logprobs    │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │  Position-Aware Blend │
-                          │  Top 1-3:  75% RRF    │
-                          │  Top 4-10: 60% RRF    │
-                          │  Top 11+:  40% RRF    │
-                          └───────────────────────┘
+               ┌─────────────────┐           ┌──────────────────────┐
+               │   BM25 (FTS5)   │           │ Vector Search        │
+               │ keyword ranking │           │ (embedding model)    │
+               └────────┬────────┘           └──────────┬───────────┘
+                        │                               │
+                        └───────────────┬───────────────┘
+                                        ▼
+                          ┌───────────────────────────┐
+                          │        RRF Fusion         │
+                          │  score = Σ 1/(k+rank+1)    │
+                          └─────────────┬─────────────┘
+                                        ▼
+                          ┌───────────────────────────┐
+                          │  Ranked candidate docs    │
+                          │  (the agent ranks these)  │
+                          └───────────────────────────┘
 ```
 
 ## Score Normalization & Fusion
@@ -471,24 +413,22 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 |---------|-----------|------------|-------|
 | **FTS (BM25)** | SQLite FTS5 BM25 | `Math.abs(score)` | 0 to ~25+ |
 | **Vector** | Cosine distance | `1 / (1 + distance)` | 0.0 to 1.0 |
-| **Reranker** | LLM 0-10 rating | `score / 10` | 0.0 to 1.0 |
 
 ### Fusion Strategy
 
-The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware blending:
+The `query` command uses **Reciprocal Rank Fusion (RRF)**. The RRF score is the
+final score — qmd-gd does not re-rank:
 
-1. **Query Expansion**: Original query (×2 for weighting) + 1 LLM variation
-2. **Parallel Retrieval**: Each query searches both FTS and vector indexes
-3. **RRF Fusion**: Combine all result lists using `score = Σ(1/(k+rank+1))` where k=60
-4. **Top-Rank Bonus**: Documents ranking #1 in any list get +0.05, #2-3 get +0.02
-5. **Top-K Selection**: Take top 30 candidates for reranking
-6. **Re-ranking**: LLM scores each document (yes/no with logprobs confidence)
-7. **Position-Aware Blending**:
-   - RRF rank 1-3: 75% retrieval, 25% reranker (preserves exact matches)
-   - RRF rank 4-10: 60% retrieval, 40% reranker
-   - RRF rank 11+: 40% retrieval, 60% reranker (trust reranker more)
+1. **Parallel Retrieval**: Each sub-query searches both FTS and vector indexes
+2. **RRF Fusion**: Combine all result lists using `score = Σ(1/(k+rank+1))` where k=60
+3. **Top-Rank Bonus**: Documents ranking #1 in any list get +0.05, #2-3 get +0.02
+4. **Top-K Selection**: Return the top candidates, ordered by RRF score
 
-**Why this approach**: Pure RRF can dilute exact matches when expanded queries don't match. The top-rank bonus preserves documents that score #1 for the original query. Position-aware blending prevents the reranker from destroying high-confidence retrieval results.
+**Why this approach**: RRF fuses keyword and semantic signals into a single robust
+ranking without needing a generative model. The top-rank bonus preserves documents
+that score #1 in any individual sub-query. Because qmd-gd delegates re-ranking to
+the calling agent, the returned candidates are the RRF-fused set for the agent to
+judge.
 
 ### Score Interpretation
 
@@ -503,24 +443,21 @@ The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware bl
 
 ### System Requirements
 
-- **Node.js** >= 22
-- **Bun** >= 1.0.0
-- **macOS**: Homebrew SQLite (for extension support)
-  ```sh
-  brew install sqlite
-  ```
+- **Node.js** >= 22 — the runtime. better-sqlite3 bundles a capable SQLite, so no
+  separate SQLite install is needed for the sqlite-vec extension.
 
-### GGUF Models (via node-llama-cpp)
+### GGUF Model (via node-llama-cpp)
 
-QMD uses three local GGUF models (auto-downloaded on first use):
+qmd-gd uses **one** local GGUF model — the embedding model — auto-downloaded on first use:
 
 | Model | Purpose | Size |
 |-------|---------|------|
 | `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~300MB |
-| `qwen3-reranker-0.6b-q8_0` | Re-ranking | ~640MB |
-| `qmd-query-expansion-1.7B-q4_k_m` | Query expansion (fine-tuned) | ~1.1GB |
 
-Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
+It is downloaded from HuggingFace and cached in `~/.cache/qmd/models/`. (Upstream qmd
+also ran a `qwen3-reranker` and a `qmd-query-expansion` model; qmd-gd delegates those
+steps to the calling agent, so they are **never downloaded** — see
+[ADR 0002](docs/adr/0002-delegate-generative-steps-to-the-agent.md).)
 
 ### Custom Embedding Model
 
@@ -546,19 +483,23 @@ Supported model families:
 
 ## Installation
 
+qmd-gd is a private fork installed from the checkout (not published to npm). It runs on
+**Node (>=22)**.
+
 ```sh
-npm install -g @tobilu/qmd
-# or
-bun install -g @tobilu/qmd
+git clone https://github.com/dudgeon/qmd-gd
+cd qmd-gd
+npm install      # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
+npm run build    # compiles dist/ via tsc
+npm link         # or: npm i -g .
 ```
+
+After a Node major-version upgrade, run `npm rebuild` so the native modules match the new ABI.
 
 ### Development
 
 ```sh
-git clone https://github.com/tobi/qmd
-cd qmd
-npm install
-npm link
+npx tsx src/cli/qmd.ts <command>   # run from source
 ```
 
 ## Usage
@@ -572,8 +513,9 @@ qmd collection add . --name myproject
 # Create a collection with explicit path and custom glob mask
 qmd collection add ~/Documents/notes --name notes --mask "**/*.md"
 
-# List all collections
+# List all collections (--json adds scope: includeByDefault + doc counts)
 qmd collection list
+qmd collection list --json
 
 # Remove a collection
 qmd collection remove myproject
@@ -606,29 +548,13 @@ qmd embed
 # Force re-embed everything
 qmd embed -f
 
-# Enable AST-aware chunking for code files (TS, JS, Python, Go, Rust)
-qmd embed --chunk-strategy auto
-
-# Also works with query for consistent chunk selection
-qmd query "auth flow" --chunk-strategy auto
-
 # Memory control for large corpora / constrained systems
 qmd embed --max-docs-per-batch 50   # cap docs per embedding batch
 qmd embed --max-batch-mb 64         # cap batch size in MB
 ```
 
-**AST-aware chunking** (`--chunk-strategy auto`) uses tree-sitter to chunk code
-files at function, class, and import boundaries instead of arbitrary text
-positions. This produces higher-quality chunks and better search results for
-codebases. Markdown and other file types always use regex-based chunking
-regardless of strategy.
-
-The default is `regex` (existing behavior). Use `--chunk-strategy auto` to
-opt in. Run `qmd status` to verify which grammars are available.
-
-> **Note:** Tree-sitter grammars are optional dependencies. If they are not
-> installed, `--chunk-strategy auto` falls back to regex-only chunking
-> automatically. Tested on both Node.js and Bun.
+Chunking is **regex/markdown-only** (~900 tokens per chunk, 15% overlap,
+preferring markdown heading boundaries). There is no AST/code-aware chunking.
 
 ### Context Management
 
@@ -678,13 +604,11 @@ global_context: "Knowledge base for my projects"
 # Overridden by the QMD_EDITOR_URI env var. See "Editor Links" below.
 editor_uri: "vscode://file{path}:{line}:{col}"
 
-# Override the default GGUF models per role. Optional — omit to use the
-# built-in defaults. `qmd init` writes this block pre-filled with the
-# resolved defaults. See "Model Configuration" for the default URIs.
+# Override the default embedding GGUF model. Optional — omit to use the
+# built-in default. See "Model Configuration" for the default URI. (qmd-gd runs
+# only the embedding model; any `rerank`/`generate` entries are ignored.)
 models:
   embed: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
-  rerank: "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf"
-  generate: "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf"
 
 # One entry per collection. The key is the collection name.
 collections:
@@ -705,7 +629,7 @@ collections:
 |-----|-------|---------|
 | `global_context` | top-level | Context prepended for every collection. Set via `qmd context add /`. |
 | `editor_uri` (alias `editor_uri_template`) | top-level | Hyperlink template for clickable result paths; `QMD_EDITOR_URI` overrides. |
-| `models.embed` / `.rerank` / `.generate` | top-level | HuggingFace GGUF URIs (`hf:<user>/<repo>/<file>`) overriding the built-in defaults per role. |
+| `models.embed` | top-level | HuggingFace GGUF URI (`hf:<user>/<repo>/<file>`) overriding the built-in embedding model. (Any `rerank`/`generate` keys are ignored by qmd-gd.) |
 | `collections.<name>.path` | per-collection | Absolute directory to index. |
 | `collections.<name>.pattern` | per-collection | Glob mask. Set via `qmd collection add --mask`. Default `**/*.md`. |
 | `collections.<name>.ignore` | per-collection | Glob patterns excluded from indexing — useful to stop nested collections double-indexing. **YAML-only — no CLI command sets this.** Additive with QMD's built-in exclusions (`node_modules`, `.git`, `.cache`, `vendor`, `dist`, `build`), which you cannot un-ignore. |
@@ -756,7 +680,8 @@ qmd collection update-cmd wiki                         # clear
 ├──────────┬───────────────────────────────────────────────────────┤
 │ search   │ BM25 full-text search only                           │
 │ vsearch  │ Vector semantic search only                          │
-│ query    │ Hybrid: FTS + Vector + Query Expansion + Re-ranking  │
+│ query    │ Hybrid: FTS + Vector + RRF fusion                    │
+│          │ (you author lex/vec/hyde; you rank the candidates)   │
 └──────────┴───────────────────────────────────────────────────────┘
 ```
 
@@ -767,7 +692,7 @@ qmd search "authentication flow"
 # Vector search (semantic similarity)
 qmd vsearch "how to login"
 
-# Hybrid search with re-ranking (best quality)
+# Hybrid search — BM25 + vector fused with RRF (best recall)
 qmd query "user authentication"
 ```
 
@@ -787,8 +712,7 @@ and `deep-search` (→ `query`).
 --explain          # Include retrieval score traces (query, JSON/CLI output)
 --index <name>     # Use named index
 --intent "<text>"  # Disambiguation context (e.g. "web page load times")
---no-rerank        # Skip LLM reranking (RRF scores only; faster on CPU)
--C, --candidate-limit <n>  # Max candidates to rerank (default: 40)
+-C, --candidate-limit <n>  # Max candidates returned by fusion (default: 40)
 --full-path        # Emit on-disk filesystem paths instead of qmd:// URIs
 
 # Output formats (for search and multi-get)
@@ -895,7 +819,7 @@ qmd search --md --full "error handling"
 # JSON output for scripting
 qmd query --json "quarterly reports"
 
-# Inspect how each result was scored (RRF + rerank blend)
+# Inspect how each result was scored (RRF fusion math; rerank score is always 0)
 qmd query --json --explain "quarterly reports"
 
 # Use separate index for different knowledge base
@@ -904,7 +828,8 @@ qmd --index work search "quarterly reports"
 
 The `--explain` flag attaches a score breakdown to each result: the FTS/vector
 backend scores plus the RRF fusion math (rank, weight, top-rank bonus) and every
-sub-query's contribution. Abbreviated:
+sub-query's contribution. The final score is the RRF score; the rerank score is
+always `0` in qmd-gd. Abbreviated:
 
 ```json
 {
@@ -921,7 +846,7 @@ sub-query's contribution. Abbreviated:
       "topRankBonus": 0.05,
       "totalScore": 0.173,
       "contributions": [
-        { "source": "fts", "queryType": "original", "query": "reranking",
+        { "source": "fts", "queryType": "original", "query": "quarterly reports",
           "rank": 1, "weight": 2, "backendScore": 0.892, "rrfContribution": 0.0328 }
       ]
     }
@@ -934,6 +859,10 @@ sub-query's contribution. Abbreviated:
 ```sh
 # Show index status and collections with contexts
 qmd status
+
+# Machine-readable index health (docs, vectors, last-indexed/embedded timestamps,
+# per-collection scope, embedding model) — for agents and the Duo dashboard
+qmd status --json
 
 # Re-index all collections. If a collection has a configured update command
 # (e.g. `git pull`), it runs first — set one with `qmd collection update-cmd`.
@@ -979,7 +908,7 @@ qmd cleanup
 
 ### Benchmarking
 
-Measure search quality across all four backends with `qmd bench` and a fixture file
+Measure search quality across the search backends with `qmd bench` and a fixture file
 of queries with known-relevant documents.
 
 **From a git checkout**, an example fixture and its test corpus ship in the repo:
@@ -1005,18 +934,17 @@ qmd bench src/bench/fixtures/example.json --json
 > qmd bench my-fixture.json -c my-collection
 > ```
 
-Each query runs against four backends, reporting precision@k, recall, MRR, and F1:
+Each query runs against these backends, reporting precision@k, recall, MRR, and F1:
 
 | Backend | What it tests | LLM required |
 |---------|---------------|--------------|
 | `bm25` | Keyword search only (FTS5) | No |
 | `vector` | Semantic similarity only | Embedding model |
-| `hybrid` | BM25 + vector fusion (no reranking) | Embedding model |
-| `full` | Full pipeline with LLM reranking | All three models |
+| `hybrid` | BM25 + vector fusion (RRF) | Embedding model |
 
 **Score interpretation:** `1.00` = perfect (all expected docs in top results),
 `0.00` = complete miss. The example fixture typically shows bm25 ~0.50, vector
-~0.70, and hybrid/full ~1.00 — a concrete demonstration of why hybrid search beats
+~0.70, and hybrid ~1.00 — a concrete demonstration of why hybrid search beats
 either backend alone.
 
 **Custom fixtures** are JSON:
@@ -1059,7 +987,7 @@ documents       -- Markdown content with metadata and docid (6-char hash)
 documents_fts   -- FTS5 full-text index
 content_vectors -- Embedding chunks (hash, seq, pos, 900 tokens each)
 vectors_vec     -- sqlite-vec vector index (hash_seq key)
-llm_cache       -- Cached LLM responses (query expansion, rerank scores)
+llm_cache       -- Cached embedding/query results
 ```
 
 ## Environment Variables
@@ -1069,9 +997,10 @@ llm_cache       -- Cached LLM responses (query expansion, rerank scores)
 | `XDG_CACHE_HOME` | `~/.cache` | Cache directory location |
 | `XDG_CONFIG_HOME` | `~/.config` | Config directory location (where `index.yml` lives) |
 | `QMD_CONFIG_DIR` | unset | Override the config directory outright (takes precedence over `XDG_CONFIG_HOME`) |
+| `QMD_EMBED_MODEL` | unset | Override the embedding GGUF model (e.g. a Qwen3-Embedding HF URI). Same effect as `models.embed` in `index.yml`; re-run `qmd embed -f` after changing. |
 | `QMD_LLAMA_GPU` | `auto` | Force llama.cpp GPU backend (`metal`, `vulkan`, `cuda`) or disable GPU with `false` |
 | `QMD_FORCE_CPU` | unset | Set to `1`/`true` to force CPU mode before any CUDA/Vulkan/Metal probing. Equivalent CLI flag: `--no-gpu`. |
-| `QMD_EMBED_PARALLELISM` | automatic | Override embedding/reranking context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |
+| `QMD_EMBED_PARALLELISM` | automatic | Override embedding context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |
 
 ## How It Works
 
@@ -1135,70 +1064,45 @@ The squared distance decay means a heading 200 tokens back (score ~30) still bea
 
 **Code Fence Protection:** Break points inside code blocks are ignored—code stays together. If a code block exceeds the chunk size, it's kept whole when possible.
 
-**AST-Aware Chunking (Code Files):**
-
-For supported code files, QMD also parses the source with [tree-sitter](https://tree-sitter.github.io/) and adds AST-derived break points that are merged with the regex scores above:
-
-| AST Node | Score | Languages |
-|----------|-------|-----------|
-| Class / interface / struct / impl / trait | 100 | All |
-| Function / method | 90 | All |
-| Type alias / enum | 80 | All |
-| Import / use declaration | 60 | All |
-
-Supported for `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, and `.rs` files. Enable with `--chunk-strategy auto`. Markdown and other file types always use regex chunking.
+Chunking is regex/markdown-only — every file type uses the scoring algorithm above. There is no AST/tree-sitter code-aware chunking.
 
 ### Query Flow (Hybrid)
 
+The agent authors the sub-queries; qmd-gd embeds, retrieves, and fuses them with RRF.
+
 ```
-Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
+Sub-queries ──► [lex, vec, hyde, …]   (authored by the agent)
                 │
       ┌─────────┴─────────┐
       ▼                   ▼
-   For each query:     FTS (BM25)
+   Vector Search       FTS (BM25)
+   (embedding model)      │
+      │                   ▼
+      ▼               Ranked List
+   Ranked List            │
       │                   │
-      ▼                   ▼
-   Vector Search      Ranked List
-      │
-      ▼
-   Ranked List
-      │
       └─────────┬─────────┘
                 ▼
          RRF Fusion (k=60)
-         Original query ×2 weight
          Top-rank bonus: +0.05/#1, +0.02/#2-3
                 │
                 ▼
-         Top 30 candidates
-                │
-                ▼
-         LLM Re-ranking
-         (yes/no + logprob confidence)
-                │
-                ▼
-         Position-Aware Blend
-         Rank 1-3:  75% RRF / 25% reranker
-         Rank 4-10: 60% RRF / 40% reranker
-         Rank 11+:  40% RRF / 60% reranker
-                │
-                ▼
-         Final Results
+         Ranked candidate docs
+         (the agent ranks these)
 ```
 
 ## Model Configuration
 
-The default models are defined in `src/llm.ts` as HuggingFace URIs:
+qmd-gd runs a single local model — the embedding model — defined in `src/llm.ts` as
+a HuggingFace URI:
 
 ```typescript
 const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
 ```
 
-Override them per-role without touching source via the `models:` block in
-`index.yml` (see [Configuring `index.yml`](#configuring-indexyml)) or the
-`QMD_EMBED_MODEL` env var. Re-run `qmd embed` after changing the embedding model.
+Override it without touching source via the `models.embed` key in `index.yml`
+(see [Configuring `index.yml`](#configuring-indexyml)) or the `QMD_EMBED_MODEL`
+env var. Re-run `qmd embed` after changing the embedding model.
 
 ### EmbeddingGemma Prompt Format
 
@@ -1209,14 +1113,6 @@ Override them per-role without touching source via the `models:` block in
 // For documents
 "title: {title} | text: {content}"
 ```
-
-### Qwen3-Reranker
-
-Uses node-llama-cpp's `createRankingContext()` and `rankAndSort()` API for cross-encoder reranking. Returns documents sorted by relevance score (0.0 - 1.0).
-
-### Qwen3 (Query Expansion)
-
-Used for generating query variations via `LlamaChatSession`.
 
 ## License
 
