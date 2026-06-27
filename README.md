@@ -101,12 +101,14 @@ from your default-scoped knowledge base, no flags to remember:
 /ask-qmd what were the takeaways from the last QBR meeting?
 ```
 
-It authors the structured query, retrieves + reads the top sources, and answers with citations.
-The scope is whatever you marked default-included at setup (`qmd collection include/exclude`).
-If you run setup inside **Duo**, it opens a small **scope playground** showing exactly what
-`/ask-qmd` searches, with a one-click "Change scope" button (it spawns a Claude tab to retune
-`include`/`exclude` and regenerates the view). Under the hood `/ask-qmd` runs the same loop the
-`qmd` skill teaches:
+It picks **instant keyword search** for exact-word questions (names, titles, IDs — or when you
+say "quick") and **thorough hybrid search** for conceptual ones, reads the top sources, and
+answers with citations. **In Duo** it then offers to open the top source and scroll to / highlight
+the answer span. The scope is whatever you marked default-included at setup
+(`qmd collection include/exclude`). If you run setup inside Duo, it also opens a small **scope
+playground** showing exactly what `/ask-qmd` searches, with a one-click "Change scope" button (it
+spawns a Claude tab to retune `include`/`exclude` and regenerates the view). Under the hood
+`/ask-qmd` runs the same loop the `qmd` skill teaches:
 
 The skill teaches the agent-driven loop: **author a structured query → retrieve →
 rank the candidates yourself.** qmd-gd does no query expansion or reranking with a

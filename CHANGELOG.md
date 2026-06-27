@@ -43,9 +43,12 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   bootstrap stub under `.agents/skills/`), so `git pull` keeps the global skill current. Added a
   CLAUDE.md "Getting set up" route so "help me get set up" / `/qmd-setup` works on a fresh
   download, and a friendly README "Get started" (download ZIP → open Claude Code → ask).
-- **Added the `ask-qmd` skill** — a turnkey `/ask-qmd "<question>"` that authors a structured
-  query, retrieves and reads the top sources, and returns a **cited answer** from qmd's
-  default-included collections. `qmd skill install --global` now symlinks both `qmd` and
+- **Added the `ask-qmd` skill** — a turnkey `/ask-qmd "<question>"` that returns a **cited
+  answer** from qmd's default-included collections. It picks **quick BM25 keyword search** for
+  exact-word questions (or when the user says "quick") and **thorough hybrid search** otherwise,
+  reads the top sources, and answers with citations. **In Duo** it then offers to open the top
+  source and `duo doc goto`/`highlight` the answer span (using `--full-path` to resolve the
+  on-disk file). `qmd skill install --global` now symlinks both `qmd` and
   `ask-qmd` (qmd-setup stays checkout-local), and the `qmd-setup` skill gained a "default ask
   scope" step that sets the scope via `qmd collection include/exclude` (no separate config —
   the scope is qmd's include/exclude state, so it can't drift).
