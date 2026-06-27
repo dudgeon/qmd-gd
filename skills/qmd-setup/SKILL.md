@@ -29,6 +29,37 @@ copy), whether the `qmd` CLI is on PATH, whether the skill is installed for
 Claude, what's indexed, and whether a Duo refresh job exists. Walk the user
 through the `[todo]` items in order. Skip any step already `[ok]`.
 
+### 0.5. Preflight external services (do this before installing)
+
+qmd-gd reaches three external services: the **npm registry** (JS deps + the sqlite-vec
+platform packages), **HuggingFace** (the embedding model), and **GitHub release hosts**
+(native prebuilts for node-llama-cpp / better-sqlite3). On a locked-down corporate network
+any of these may be proxied through an internal mirror — or blocked. Test them first so a
+blocked dependency surfaces here, not as a confusing failure mid-install:
+
+```bash
+bash skills/qmd-setup/scripts/preflight-deps.sh   # exits non-zero if any service fails
+```
+
+For each service it tests the **effective endpoint** — your configured internal value if
+set, else the public default — and on failure prints the exact knob to set plus a repro
+command.
+
+**If a service reports `[FAIL]`:** ask the user for that service's internal URL, set it, and
+re-run the preflight until it passes — only then proceed to install. The knobs:
+
+- **npm registry** → `npm config set registry <url>` (or `~/.npmrc` `registry=`, or
+  `NPM_CONFIG_REGISTRY`). This is usually the org's Artifactory npm virtual repo.
+- **HuggingFace** → `export HF_ENDPOINT=<mirror>` — or skip it entirely with
+  `export QMD_EMBED_MODEL=/abs/path/to/embeddinggemma-300M-Q8_0.gguf` (a pre-staged file).
+- **native prebuilts** → if GitHub release hosts are blocked, either set
+  `npm config set better_sqlite3_binary_host_mirror <url>` or build from source
+  (`npm install --build-from-source`; node-llama-cpp needs cmake + a C/C++ toolchain).
+
+Persist whatever you set (shell profile / `~/.npmrc` / a project `.env`) so install, `qmd
+embed`, and the scheduled refresh all use the same endpoints. Re-run the preflight (and the
+native functional check passes once `qmd` is installed).
+
 ### 1. Build & link the CLI (if `qmd` is not on PATH)
 
 From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a worktree). qmd-gd runs on

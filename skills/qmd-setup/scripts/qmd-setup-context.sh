@@ -73,38 +73,20 @@ else
   info "(skipped — qmd not available yet)"
 fi
 
-# --- Embedding model: cache + download dependency (HuggingFace) -------------
-# qmd-gd downloads ONE model — the embedding model (~333MB) — on first `qmd embed`
-# /`qmd pull`. In a locked-down network HuggingFace may be blocked, so preflight the
-# dependency here WITHOUT fetching the 333MB body (a HEAD request), and detect whether
-# the model is already cached.
-section "Embedding model (download dependency)"
+# --- Embedding model cache --------------------------------------------------
+# qmd-gd downloads ONE model — the embedding model (~333MB) — on first `qmd embed`.
+# Here we only report whether it's already present; the full network-dependency test
+# (HuggingFace + npm registry + prebuilt hosts) lives in preflight-deps.sh.
+section "Embedding model"
 CACHE_MODELS="${XDG_CACHE_HOME:-$HOME/.cache}/qmd/models"
 if ls "$CACHE_MODELS"/*embeddinggemma* >/dev/null 2>&1; then
   ok "embedding model already cached in $CACHE_MODELS — no download needed."
 elif [[ -n "${QMD_EMBED_MODEL:-}" && -f "${QMD_EMBED_MODEL:-}" ]]; then
   ok "QMD_EMBED_MODEL points at a local file ($QMD_EMBED_MODEL) — no download needed."
 else
-  todo "Embedding model not present (~333MB). It downloads on first 'qmd embed' / 'qmd pull'."
-  HF_HOST="${HF_ENDPOINT:-https://huggingface.co}"
-  MODEL_URL="$HF_HOST/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf"
-  if command -v curl >/dev/null 2>&1; then
-    code="$(curl -sI -o /dev/null -w '%{http_code}' -L --max-time 12 "$MODEL_URL" 2>/dev/null || echo 000)"
-    case "$code" in
-      200|301|302) ok "HuggingFace reachable (HTTP $code via $HF_HOST) — auto-download should work." ;;
-      000)         todo "Cannot reach $HF_HOST (timeout/blocked) — auto-download will FAIL on this network." ;;
-      401|403)     todo "HuggingFace returned HTTP $code (auth/proxy block) — auto-download will likely fail." ;;
-      *)           todo "HuggingFace returned HTTP $code — verify before relying on auto-download." ;;
-    esac
-  else
-    info "curl not found — can't preflight; run 'qmd pull' to test the download directly."
-  fi
-  info "If blocked, use ONE of:"
-  info "  (a) QMD_EMBED_MODEL=/abs/path/to/embeddinggemma.gguf   (pre-staged local file; no network)"
-  info "  (b) copy the .gguf (+ its .etag) into $CACHE_MODELS"
-  info "  (c) HF_ENDPOINT=<internal HuggingFace mirror>          (then 'qmd pull')"
+  todo "Embedding model not present (~333MB) — downloads on first 'qmd embed' / 'qmd pull'."
+  todo "Test the download dependency first:  bash skills/qmd-setup/scripts/preflight-deps.sh"
 fi
-[[ "$QMD_OK" == "1" ]] && info "After the model is in place, 'qmd doctor' verifies the cache + device/GPU."
 
 # --- Scheduled refresh (Duo) ------------------------------------------------
 section "Scheduled refresh"
