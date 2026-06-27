@@ -55,13 +55,37 @@ qmd skill install --global
 
 Verify: `ls -l ~/.claude/skills/qmd` should show a symlink into the checkout.
 
-### 3. Download the embedding model
+### 3. Get the embedding model (test the dependency first)
 
-qmd-gd downloads **only** the embedding model (no generative/reranker models):
+qmd-gd downloads **only** the embedding model (~333MB, no generative/reranker models)
+from HuggingFace on first use. On a locked-down work network this is the dependency most
+likely to be blocked — the step-0 probe **preflights it** (a HEAD request, no full
+download) and reports `[ok]` / `[todo]`. Check that line before downloading:
 
-```bash
-qmd pull
-```
+- **Reachable / already cached** → just pull it:
+
+  ```bash
+  qmd pull        # downloads the embedding model; etag-cached, so it's a one-time fetch
+  ```
+
+- **Blocked** (probe said it can't reach HuggingFace) → use one offline path instead of
+  `qmd pull`, then continue:
+
+  ```bash
+  # (a) point at a pre-staged local file (downloaded on an allowed machine) — no network:
+  export QMD_EMBED_MODEL=/abs/path/to/embeddinggemma-300M-Q8_0.gguf
+  # (b) or drop the .gguf (+ its .etag) into ~/.cache/qmd/models/ and qmd pull skips the fetch
+  # (c) or point at an internal HuggingFace mirror, then qmd pull:
+  export HF_ENDPOINT=https://<your-org-hf-mirror>
+  ```
+
+  Persist whichever you choose (e.g. in `.env` / shell profile) so `qmd embed` and the
+  scheduled refresh use the same model. Re-run the step-0 probe to confirm it now reports `[ok]`.
+
+> Note: `npm install` (step 1) also fetches native prebuilts for `node-llama-cpp`,
+> `better-sqlite3`, and `sqlite-vec` from their own hosts (not just the npm registry). If
+> your Artifactory proxy doesn't cover those and `npm install` fails to produce a working
+> binary, `qmd doctor` will flag it — install build tools or a proxied prebuilt source.
 
 ### 4. Add the repos/folders to search
 
