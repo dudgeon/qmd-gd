@@ -241,32 +241,13 @@ export function findBestCutoff(
 // Chunk Strategy
 // =============================================================================
 
-export type ChunkStrategy = "auto" | "regex";
-
-/**
- * Merge two sets of break points (e.g. regex + AST), keeping the highest
- * score at each position. Result is sorted by position.
- */
-export function mergeBreakPoints(a: BreakPoint[], b: BreakPoint[]): BreakPoint[] {
-  const seen = new Map<number, BreakPoint>();
-  for (const bp of a) {
-    const existing = seen.get(bp.pos);
-    if (!existing || bp.score > existing.score) {
-      seen.set(bp.pos, bp);
-    }
-  }
-  for (const bp of b) {
-    const existing = seen.get(bp.pos);
-    if (!existing || bp.score > existing.score) {
-      seen.set(bp.pos, bp);
-    }
-  }
-  return Array.from(seen.values()).sort((a, b) => a.pos - b.pos);
-}
+// Vestigial: chunking is always regex/markdown-based. Kept (and re-exported by
+// the SDK) only so the public `chunkStrategy?` option type stays stable.
+export type ChunkStrategy = "regex";
 
 /**
  * Core chunk algorithm that operates on precomputed break points and code fences.
- * This is the shared implementation used by both regex-only and AST-aware chunking.
+ * This is the shared implementation used by the regex/markdown chunker.
  */
 export function chunkDocumentWithBreakPoints(
   content: string,
@@ -2399,7 +2380,7 @@ export function cleanupOrphanedContent(db: Database): number {
  * Returns the number of orphaned embedding chunks deleted.
  */
 export function cleanupOrphanedVectors(db: Database): number {
-  // sqlite-vec may not be loaded (e.g. Bun's bun:sqlite lacks loadExtension).
+  // sqlite-vec may not be loaded (e.g. the native extension failed to install).
   // The vectors_vec virtual table can appear in sqlite_master from a prior
   // session, but querying it without the vec0 module loaded will crash (#380).
   if (!isSqliteVecAvailable()) {
@@ -2709,33 +2690,20 @@ export function chunkDocument(
 }
 
 /**
- * Async AST-aware chunking. Detects language from filepath, computes AST
- * break points for supported code files, merges with regex break points,
- * and delegates to the shared chunk algorithm.
- *
- * Falls back to regex-only when strategy is "regex", filepath is absent,
- * or language is unsupported.
+ * Async wrapper around the regex/markdown chunker. The `_filepath` and
+ * `_chunkStrategy` params are vestigial (kept for call-site compatibility);
+ * chunking is always regex/markdown-based.
  */
 export async function chunkDocumentAsync(
   content: string,
   maxChars: number = CHUNK_SIZE_CHARS,
   overlapChars: number = CHUNK_OVERLAP_CHARS,
   windowChars: number = CHUNK_WINDOW_CHARS,
-  filepath?: string,
-  chunkStrategy: ChunkStrategy = "regex",
+  _filepath?: string,
+  _chunkStrategy: ChunkStrategy = "regex",
 ): Promise<{ text: string; pos: number }[]> {
-  const regexPoints = scanBreakPoints(content);
+  const breakPoints = scanBreakPoints(content);
   const codeFences = findCodeFences(content);
-
-  let breakPoints = regexPoints;
-  if (chunkStrategy === "auto" && filepath) {
-    const { getASTBreakPoints } = await import("./ast.js");
-    const astPoints = await getASTBreakPoints(content, filepath);
-    if (astPoints.length > 0) {
-      breakPoints = mergeBreakPoints(regexPoints, astPoints);
-    }
-  }
-
   return chunkDocumentWithBreakPoints(content, breakPoints, codeFences, maxChars, overlapChars, windowChars);
 }
 
@@ -2743,8 +2711,7 @@ export async function chunkDocumentAsync(
  * Chunk a document by actual token count using the LLM tokenizer.
  * More accurate than character-based chunking but requires async.
  *
- * When filepath and chunkStrategy are provided, uses AST-aware break points
- * for supported code files.
+ * The `filepath` and `chunkStrategy` params are vestigial (regex chunking only).
  */
 export async function chunkDocumentByTokens(
   content: string,
@@ -2765,7 +2732,6 @@ export async function chunkDocumentByTokens(
   const windowChars = windowTokens * avgCharsPerToken;
 
   // Chunk in character space with conservative estimate
-  // Use AST-aware chunking for the first pass when filepath/strategy provided
   let charChunks = await chunkDocumentAsync(content, maxChars, overlapChars, windowChars, filepath, chunkStrategy);
 
   // Tokenize and split any chunks that still exceed limit

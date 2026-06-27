@@ -168,7 +168,7 @@ export interface SearchOptions {
   minScore?: number;
   /** Include explain traces */
   explain?: boolean;
-  /** Chunk strategy: "auto" (default, uses AST for code files) or "regex" (legacy) */
+  /** Chunk strategy. Vestigial — chunking is always regex/markdown-based. Retained for API stability. */
   chunkStrategy?: ChunkStrategy;
 }
 

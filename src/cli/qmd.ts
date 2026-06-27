@@ -1,4 +1,4 @@
-import { isBun, openDatabase } from "../db.js";
+import { openDatabase } from "../db.js";
 import type { Database, SQLiteValue } from "../db.js";
 import fastGlob from "fast-glob";
 import { execSync, spawn as nodeSpawn } from "child_process";
@@ -76,7 +76,6 @@ import {
   maybeAdoptLegacyEmbeddingFingerprint,
   syncConfigToDb,
   type ReindexResult,
-  type ChunkStrategy,
 } from "../store.js";
 import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, inspectGgufFile, isDarwinMetalMitigationActive } from "../llm.js";
 import {
@@ -514,32 +513,6 @@ async function showStatus(): Promise<void> {
       path_prefix: ctx.path,
       context: ctx.context
     });
-  }
-
-  // AST chunking status
-  try {
-    const { getASTStatus } = await import("../ast.js");
-    const ast = await getASTStatus();
-    console.log(`\n${c.bold}AST Chunking${c.reset}`);
-    if (ast.available) {
-      const ok = ast.languages.filter(l => l.available).map(l => l.language);
-      const fail = ast.languages.filter(l => !l.available);
-      console.log(`  Status:   ${c.green}active${c.reset}`);
-      console.log(`  Languages: ${ok.join(", ")}`);
-      if (fail.length > 0) {
-        for (const f of fail) {
-          console.log(`  ${c.yellow}Unavailable: ${f.language} (${f.error})${c.reset}`);
-        }
-      }
-    } else {
-      console.log(`  Status:   ${c.yellow}unavailable${c.reset} (falling back to regex chunking)`);
-      for (const l of ast.languages) {
-        if (l.error) console.log(`  ${c.dim}${l.language}: ${l.error}${c.reset}`);
-      }
-    }
-  } catch {
-    console.log(`\n${c.bold}AST Chunking${c.reset}`);
-    console.log(`  Status:   ${c.dim}not available${c.reset}`);
   }
 
   if (collections.length > 0) {
@@ -1783,13 +1756,6 @@ function parseEmbedBatchOption(name: string, value: unknown): number | undefined
   return parsed;
 }
 
-function parseChunkStrategy(value: unknown): ChunkStrategy | undefined {
-  if (value === undefined) return undefined;
-  const s = String(value);
-  if (s === "auto" || s === "regex") return s;
-  throw new Error(`--chunk-strategy must be "auto" or "regex" (got "${s}")`);
-}
-
 // --timeout for `qmd embed`: a cap on the whole embed session, in minutes. Returns
 // the value in milliseconds, or undefined to use the default. 0 disables the cap.
 function parseEmbedTimeoutOption(value: unknown): number | undefined {
@@ -1835,7 +1801,7 @@ function resolveModelsForCli(): { embed: string } {
 async function vectorIndex(
   model: string = resolveEmbedModelForCli(),
   force: boolean = false,
-  batchOptions?: { maxDocsPerBatch?: number; maxBatchBytes?: number; chunkStrategy?: ChunkStrategy; collection?: string; maxDurationMs?: number },
+  batchOptions?: { maxDocsPerBatch?: number; maxBatchBytes?: number; collection?: string; maxDurationMs?: number },
 ): Promise<void> {
   const storeInstance = getStore();
   const db = storeInstance.db;
@@ -1869,7 +1835,6 @@ async function vectorIndex(
     collection: batchOptions?.collection,
     maxDocsPerBatch: batchOptions?.maxDocsPerBatch,
     maxBatchBytes: batchOptions?.maxBatchBytes,
-    chunkStrategy: batchOptions?.chunkStrategy,
     maxDurationMs: batchOptions?.maxDurationMs,
     onProgress: (info) => {
       if (info.totalBytes === 0) return;
@@ -1977,7 +1942,6 @@ type OutputOptions = {
   candidateLimit?: number;  // Max candidates to rerank (default: 40)
   intent?: string;       // Domain intent for disambiguation
   skipRerank?: boolean;  // Skip LLM reranking, use RRF scores only
-  chunkStrategy?: ChunkStrategy;  // "auto" (default) or "regex"
   fullPath?: boolean;    // Show realpath instead of qmd:// URI (relative to $PWD when subpath)
 };
 
@@ -2587,7 +2551,6 @@ async function querySearch(query: string, opts: OutputOptions, _embedModel: stri
         skipRerank: opts.skipRerank,
         explain: !!opts.explain,
         intent,
-        chunkStrategy: opts.chunkStrategy,
         hooks: {
           onEmbedStart: (count) => {
             process.stderr.write(`${c.dim}Embedding ${count} ${count === 1 ? 'query' : 'queries'}...${c.reset}`);
@@ -2615,7 +2578,6 @@ async function querySearch(query: string, opts: OutputOptions, _embedModel: stri
         skipRerank: opts.skipRerank,
         explain: !!opts.explain,
         intent,
-        chunkStrategy: opts.chunkStrategy,
         hooks: {
           onStrongSignal: (score) => {
             process.stderr.write(`${c.dim}Strong BM25 signal (${score.toFixed(2)}) — skipping expansion${c.reset}\n`);
@@ -2737,8 +2699,6 @@ function parseCLI() {
       "no-rerank": { type: "boolean", default: false },
       "no-gpu": { type: "boolean", default: false },
       intent: { type: "string" },
-      // Chunking options
-      "chunk-strategy": { type: "string" },  // "regex" (default) or "auto" (AST for code files)
     },
     allowPositionals: true,
     strict: false, // Allow unknown options to pass through
@@ -2803,7 +2763,6 @@ function parseCLI() {
     skipRerank: true, // qmd-gd: the local reranker is never run; --no-rerank kept as a no-op alias (ADR 0002)
     explain: !!values.explain,
     intent: values.intent as string | undefined,
-    chunkStrategy: parseChunkStrategy(values["chunk-strategy"]),
     fullPath: !!values["full-path"],
   };
 
@@ -3318,7 +3277,6 @@ function showHelp(): void {
   console.log("  -c, --collection <name>    - Filter by one or more collections");
   console.log("");
   console.log("Embed/query options:");
-  console.log("  --chunk-strategy <auto|regex> - Chunking mode (default: regex; auto uses AST for code files)");
   console.log("  --timeout <minutes>          - Embed session cap in minutes (0 = no limit; default 30)");
   console.log("");
   console.log("Multi-get options:");
@@ -3791,7 +3749,7 @@ async function showDoctor(): Promise<void> {
 
   console.log(`${c.bold}QMD Doctor${c.reset}\n`);
   console.log(`Index: ${getDbPath()}`);
-  console.log(`Runtime: ${isBun ? "bun:sqlite" : "better-sqlite3"}`);
+  console.log(`Runtime: better-sqlite3`);
 
   try {
     const row = db.prepare(`SELECT sqlite_version() AS version`).get() as { version: string };
@@ -4257,7 +4215,6 @@ if (isMain) {
       try {
         const maxDocsPerBatch = parseEmbedBatchOption("maxDocsPerBatch", cli.values["max-docs-per-batch"]);
         const maxBatchMb = parseEmbedBatchOption("maxBatchBytes", cli.values["max-batch-mb"]);
-        const embedChunkStrategy = parseChunkStrategy(cli.values["chunk-strategy"]);
         const embedMaxDurationMs = parseEmbedTimeoutOption(cli.values["timeout"]);
         // Validate -c against configured collections before dispatching, so a
         // typo errors with "Collection not found: X" instead of silently
@@ -4268,7 +4225,6 @@ if (isMain) {
         await vectorIndex(resolveEmbedModelForCli(), !!cli.values.force, {
           maxDocsPerBatch,
           maxBatchBytes: maxBatchMb === undefined ? undefined : maxBatchMb * 1024 * 1024,
-          chunkStrategy: embedChunkStrategy,
           collection: embedCollection,
           maxDurationMs: embedMaxDurationMs,
         });
