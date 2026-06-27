@@ -13,8 +13,10 @@ texts/
 !CLAUDE.md
 !CHANGELOG.md
 !docs/**/*.md
-# Project skills ship in-repo so Claude Code auto-discovers them when opened here.
-# Ignore everything else under .claude/ (worktrees, local settings, caches).
+# Project skills + subagents ship in-repo so Claude Code auto-discovers them when
+# opened here. Ignore everything else under .claude/ (worktrees, local settings, caches).
 .claude/*
 !.claude/skills/
 !.claude/skills/**
+!.claude/agents/
+!.claude/agents/**

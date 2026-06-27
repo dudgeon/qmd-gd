@@ -16,6 +16,22 @@ you don't pass `-c`, so a plain search already hits the right corpus. The user c
 default at setup (`qmd collection include/exclude`). Only pass `-c` if the user names an area
 (see Scope overrides).
 
+## Fastest path — delegate retrieval to the `qmd-retrieve` subagent
+
+If you're on an expensive model (e.g. Opus) or the corpus is large, hand the
+search → read → rank work to the **`qmd-retrieve`** subagent (Sonnet) via the
+**Task tool**, then do the answer + Duo steps yourself:
+
+1. Spawn `qmd-retrieve` with the user's question (and any scope the user named). It
+   runs the loop below and returns a ranked, cited shortlist — `qmd://` path +
+   `#docid:line`, a one-line why, and a key quote per source — plus a `coverage:` line.
+2. Compose the user-facing answer from that shortlist (step 4) and drive the Duo
+   open-source flow (step 5) yourself — those need your conversation context + Duo tools.
+3. Need more from a source? Re-invoke `qmd-retrieve` with the docid and what you want
+   (e.g. "expand #abc123 around the rollout steps") rather than re-searching.
+
+If the subagent isn't available, or for a quick one-off, run the loop inline:
+
 ## 1. Pick the search mode — quick or thorough
 
 Choose per question; default to thorough.

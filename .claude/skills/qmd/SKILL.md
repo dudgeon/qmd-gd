@@ -116,11 +116,12 @@ After retrieving:
    candidates based on what the documents actually say, not their RRF rank.
 4. Answer from the documents you confirmed, citing docids and line numbers.
 
-For a large candidate set, you may delegate the relevance judgment to a cheap
-subagent (e.g. a Haiku subagent via the **Task tool**) — pass it the query intent
-and the candidate snippets/docs and have it return the ranked, filtered set.
-**Never shell out to `claude -p` or any headless Claude process** to do this; use
-the in-session Task tool. qmd itself never calls Claude.
+For the whole search → read → rank loop — especially when you're on an expensive
+model (Opus) or the candidate set is large — delegate to the **`qmd-retrieve`
+subagent** (Sonnet) via the **Task tool**: give it the question (and any scope) and
+it returns a ranked, cited shortlist; re-invoke it with a docid to pull more detail.
+**Never shell out to `claude -p` or any headless Claude process**; the Task-tool
+subagent is in-session. qmd itself never calls Claude.
 
 qmd-gd never runs a local reranker — `qmd query` always returns RRF-fused
 candidates for **you** to rank. There is no rerank flag.

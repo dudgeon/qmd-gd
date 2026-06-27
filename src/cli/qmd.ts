@@ -2821,10 +2821,33 @@ function parseCLI() {
 // there; it is not meant to be available from arbitrary folders.
 const INSTALLABLE_SKILL_NAMES = ["qmd", "ask-qmd"];
 
+// Subagent files (single .md each) under .claude/agents/ that `qmd skill install`
+// links alongside the skills, so `qmd-retrieve` is available from other folders too.
+const INSTALLABLE_AGENT_FILES = ["qmd-retrieve.md"];
+const AGENT_DIR = ".claude/agents";
+
 function getClaudeSkillLinkPath(globalInstall: boolean, name: string): string {
   return globalInstall
     ? resolve(homedir(), ".claude", "skills", name)
     : resolve(getPwd(), ".claude", "skills", name);
+}
+
+function getClaudeAgentLinkPath(globalInstall: boolean, fileName: string): string {
+  return globalInstall
+    ? resolve(homedir(), ".claude", "agents", fileName)
+    : resolve(getPwd(), ".claude", "agents", fileName);
+}
+
+function getAgentSourcePath(fileName: string): string | null {
+  if (process.env.QMD_SKILLS_DIR) {
+    // QMD_SKILLS_DIR points at a .claude/skills dir; agents are its sibling.
+    const candidate = resolve(process.env.QMD_SKILLS_DIR, "..", "agents", fileName);
+    return existsSync(candidate) ? candidate : null;
+  }
+  const root = findPackageRoot();
+  if (!root) return null;
+  const candidate = resolve(root, AGENT_DIR, fileName);
+  return existsSync(candidate) ? candidate : null;
 }
 
 function pathExists(path: string): boolean {
@@ -3128,6 +3151,23 @@ function ensureClaudeSymlink(linkPath: string, targetDir: string, force: boolean
   return true;
 }
 
+function ensureClaudeFileSymlink(linkPath: string, targetFile: string, force: boolean): boolean {
+  if (resolve(linkPath) === resolve(targetFile)) return false; // source already at destination
+  const parentDir = dirname(linkPath);
+  mkdirSync(parentDir, { recursive: true });
+  const linkTarget = relativePath(parentDir, targetFile);
+  if (pathExists(linkPath)) {
+    const stat = lstatSync(linkPath);
+    if (stat.isSymbolicLink() && readlinkSync(linkPath) === linkTarget) return true;
+    if (!force) {
+      throw new Error(`Claude agent path already exists: ${linkPath} (use --force to replace it)`);
+    }
+    removePath(linkPath);
+  }
+  symlinkSync(linkTarget, linkPath);
+  return true;
+}
+
 async function shouldCreateClaudeSymlink(linkPath: string, autoYes: boolean): Promise<boolean> {
   if (autoYes) {
     return true;
@@ -3182,6 +3222,26 @@ async function installSkill(globalInstall: boolean, force: boolean, autoYes: boo
       console.log(`✓ Linked the ${skill.name} skill: ${linkPath} -> ${sourceDir}`);
     } else {
       console.log(`✓ Claude already sees the ${skill.name} skill at ${dirname(linkPath)}`);
+    }
+  }
+
+  // Also link bundled subagents (single .md files under .claude/agents/), so the
+  // qmd-retrieve subagent is discoverable from other folders too.
+  for (const agentFile of INSTALLABLE_AGENT_FILES) {
+    const sourceFile = getAgentSourcePath(agentFile);
+    if (!sourceFile) continue; // older checkout without the agent — nothing to link
+    const linkPath = getClaudeAgentLinkPath(globalInstall, agentFile);
+    if (resolve(linkPath) === resolve(sourceFile)) {
+      console.log(`✓ The ${agentFile} agent already lives at ${linkPath}; Claude Code auto-discovers it here.`);
+      continue;
+    }
+    if (!(await shouldCreateClaudeSymlink(linkPath, autoYes))) {
+      console.log(`  To link it by hand: ln -s "${sourceFile}" "${linkPath}"`);
+      continue;
+    }
+    const linked = ensureClaudeFileSymlink(linkPath, sourceFile, force);
+    if (linked) {
+      console.log(`✓ Linked the ${agentFile} agent: ${linkPath} -> ${sourceFile}`);
     }
   }
 }
@@ -3254,7 +3314,7 @@ function showHelp(): void {
   console.log("");
   console.log("AI agents & integrations:");
   console.log("  - Run `qmd skills get qmd --full` for version-matched agent instructions.");
-  console.log("  - `qmd skill install --global` symlinks the qmd + ask-qmd skills into ~/.claude/skills/ (available everywhere).");
+  console.log("  - `qmd skill install --global` symlinks the qmd + ask-qmd skills and the qmd-retrieve subagent into ~/.claude/ (available everywhere).");
   console.log("  - Or just open Claude Code in this checkout — skills under .claude/skills/ auto-load, no install.");
   console.log("  - `qmd --skill` is kept as an alias for `qmd skill show`.");
   console.log("");

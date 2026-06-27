@@ -19,6 +19,7 @@
     "bin/",
     "dist/",
     ".claude/skills/",
+    ".claude/agents/",
     "scripts/build.mjs",
     "scripts/test-all.mjs",
     "docs/adr/",

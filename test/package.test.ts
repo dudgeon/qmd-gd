@@ -37,7 +37,7 @@ describe("package test task", () => {
 
 describe("published package files", () => {
   test("ships bin, dist, skills, and the build/test scripts", () => {
-    for (const entry of ["bin/", "dist/", ".claude/skills/", "scripts/build.mjs", "scripts/test-all.mjs"]) {
+    for (const entry of ["bin/", "dist/", ".claude/skills/", ".claude/agents/", "scripts/build.mjs", "scripts/test-all.mjs"]) {
       expect(pkg.files, `published package files should include ${entry}`).toContain(entry);
     }
     // Grammar/smoke helpers were removed with the AST/Bun teardown.
