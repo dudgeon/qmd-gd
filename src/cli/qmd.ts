@@ -458,7 +458,7 @@ function sanitizeDiagnosticMessage(message: string): string {
     .join("; ");
 }
 
-async function showStatus(): Promise<void> {
+async function showStatus(asJson = false): Promise<void> {
   const dbPath = getDbPath();
   const db = getDb();
 
@@ -483,6 +483,32 @@ async function showStatus(): Promise<void> {
 
   // Most recent update across all collections
   const mostRecent = db.prepare(`SELECT MAX(modified_at) as latest FROM documents WHERE active = 1`).get() as { latest: string | null };
+
+  if (asJson) {
+    // Machine-readable index health — consumed by agents and the Duo scope/status dashboard.
+    const lastEmbedded = db.prepare(`SELECT MAX(embedded_at) as latest FROM content_vectors WHERE embedded_at != ''`).get() as { latest: string | null };
+    const hasVectors = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='vectors_vec'`).get();
+    console.log(JSON.stringify({
+      indexPath: dbPath,
+      sizeBytes: indexSize,
+      totalDocuments: totalDocs.count,
+      vectorsEmbedded: vectorCount.count,
+      needsEmbedding,
+      hasVectorIndex: hasVectors,
+      lastIndexedAt: mostRecent.latest ?? null,
+      lastEmbeddedAt: lastEmbedded.latest || null,
+      embedModel: statusEmbedModel,
+      collections: collections.map((col) => ({
+        name: col.name,
+        pattern: col.glob_pattern,
+        documents: col.active_count,
+        lastModified: col.last_modified ?? null,
+        includeByDefault: col.includeByDefault !== false,
+      })),
+    }));
+    closeDb();
+    return;
+  }
 
   console.log(`${c.bold}QMD Status${c.reset}\n`);
   console.log(`Index: ${dbPath}`);
@@ -4179,7 +4205,7 @@ if (isMain) {
       break;
 
     case "status":
-      await showStatus();
+      await showStatus(Boolean(cli.values.json));
       break;
 
     case "doctor":

@@ -507,6 +507,24 @@ describe("CLI Status Command", () => {
     await runQmd(["collection", "add", "."]);
   });
 
+  test("status --json reports index health for the dashboard", async () => {
+    const { stdout, exitCode } = await runQmd(["status", "--json"]);
+    expect(exitCode).toBe(0);
+    const st = JSON.parse(stdout.trim());
+    expect(typeof st.totalDocuments).toBe("number");
+    expect(typeof st.vectorsEmbedded).toBe("number");
+    expect(typeof st.needsEmbedding).toBe("number");
+    expect(typeof st.sizeBytes).toBe("number");
+    expect(st.embedModel).toBeTruthy();
+    expect(st).toHaveProperty("lastIndexedAt");
+    expect(st).toHaveProperty("lastEmbeddedAt");
+    expect(Array.isArray(st.collections)).toBe(true);
+    const fixtures = st.collections.find((col: { name: string }) => col.name === "fixtures");
+    expect(fixtures).toBeTruthy();
+    expect(fixtures.includeByDefault).toBe(true);
+    expect(typeof fixtures.documents).toBe("number");
+  });
+
   test("qmd doctor reports core index health checks", async () => {
     const { stdout, exitCode } = await runQmd(["doctor"]);
     expect(exitCode).toBe(0);
