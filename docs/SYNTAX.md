@@ -152,7 +152,7 @@ array — a singular `collection` is silently ignored.
 ## CLI
 
 ```bash
-# Single line (implicit expand)
+# Single bare line (seeds FTS + vector directly; no expansion)
 qmd query "how does auth work"
 
 # Multi-line with types
