@@ -53,6 +53,6 @@ qmd-gd never invokes Claude. The skill (ADR 0003 area) teaches the loop:
   a constant `0` and `blendedScore == score` (pure RRF).
 - The public SDK names `QMDStore.expandQuery` and `SearchOptions.rerank` are **quarantined as
   no-ops** rather than deleted, to avoid breaking the API surface. The internal generative code
-  (`ensureGenerateModel`, `ensureRerankModel`, GBNF grammar) is left for a follow-up cleanup.
+  (`ensureGenerateModel`, `ensureRerankModel`, GBNF grammar) has now been removed.
 - Result quality now depends on the agent authoring good structured queries — which the skill
   already emphasizes and the agent is well-suited to do.

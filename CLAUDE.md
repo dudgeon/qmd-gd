@@ -1,10 +1,8 @@
 # QMD - Query Markup Documents (qmd-gd fork)
 
-qmd-gd runs on **Node (>=22)** — no Bun required (`npm install`, `npm run build`,
-`npm link`). A committed `package-lock.json` makes the `qmd` launcher route to Node;
-Bun still works if present but is not the default and not needed. After a Node major
-upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec, node-llama-cpp)
-match the new ABI.
+qmd-gd runs on **Node (>=22)** (`npm install`, `npm run build`, `npm link`). After a
+Node major upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec,
+node-llama-cpp) match the new ABI.
 
 ## Commands
 
@@ -146,7 +144,6 @@ All tests live in `test/`. Run everything:
 
 ```sh
 npx vitest run --reporter=verbose test/
-bun test --preload ./src/test-preload.ts test/
 ```
 
 ## Architecture
@@ -155,8 +152,7 @@ bun test --preload ./src/test-preload.ts test/
 - sqlite-vec for vector similarity search
 - node-llama-cpp for **embeddings only** (embeddinggemma). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
 - Reciprocal Rank Fusion (RRF) for combining results
-- Smart chunking: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries
-- AST-aware chunking: use `--chunk-strategy auto` to chunk code files (.ts/.js/.py/.go/.rs) at function/class/import boundaries via tree-sitter. Default is `regex` (existing behavior). Markdown and unknown file types always use regex chunking.
+- Chunking is regex/markdown-only: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries. There is no AST/code-aware chunking.
 
 ## Important: Do NOT run automatically
 
@@ -167,18 +163,9 @@ bun test --preload ./src/test-preload.ts test/
 
 ## Do NOT compile
 
-- Never run `bun build --compile` - it overwrites the shell wrapper and breaks sqlite-vec
 - The `qmd` file is a shell script that runs compiled JS from `dist/` - do not replace it
 - `npm run build` compiles TypeScript to `dist/` via `tsc -p tsconfig.build.json`
 
-## Releasing
+## Changelog
 
-Use `/release <version>` to cut a release. Full changelog standards,
-release workflow, and git hook setup are documented in the
-[release skill](skills/release/SKILL.md).
-
-Key points:
-- Add changelog entries under `## [Unreleased]` **as you make changes**
-- The release script renames `[Unreleased]` → `[X.Y.Z] - date` at release time
-- Credit external PRs with `#NNN (thanks @username)`
-- GitHub releases roll up the full minor series (e.g. 1.2.0 through 1.2.3)
+- Add changelog entries under `## [Unreleased]` **as you make changes**.

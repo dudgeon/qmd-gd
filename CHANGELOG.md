@@ -21,8 +21,7 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 - **Embeddings stay local** on the default model — the one inference step that can't
   be delegated to the agent. (ADR 0001)
 - `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
-- **Runs on Node (>=22) — no Bun required.** A committed `package-lock.json` makes the
-  `qmd` launcher route to Node; install is `npm install && npm run build && npm link`.
+- **Runs on Node (>=22).** Install is `npm install && npm run build && npm link`.
   Verified end-to-end on Node (index/embed/vector search all work). Fork identity is
   private (`dudgeon/qmd-gd`); not published to npm.
 - Fixed `.gitignore` so the `docs/adr/` records are actually tracked (the `*.md` rule
@@ -32,6 +31,20 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   a manual-invoke **`qmd-setup`** skill that sequences first-time install (build/link,
   `qmd skill install --global`, add collections, index, embed, schedule, verify).
 - Added `docs/adr/` recording the four architecture decisions.
+
+### Removed
+
+- **Bun support.** qmd-gd is Node-only (>=22); the Bun runtime path, lockfile, and
+  launcher detection are gone.
+- **AST/tree-sitter code chunking.** The `--chunk-strategy auto` flag and the
+  `web-tree-sitter` grammars are removed — chunking is regex/markdown-only.
+- **The release/publish machinery + CI/Nix workflows.** The `/release` skill, release
+  scripts, git hooks, GitHub Actions publish/CI workflows, and the Nix flake are gone;
+  this private fork is not published.
+- **The `finetune/` pipeline.** The query-expansion fine-tuning code is removed.
+- **The dead generative-model internals.** `ensureGenerateModel`, `ensureRerankModel`,
+  and the GBNF grammar are deleted now that expansion/reranking are delegated to the
+  agent (ADR 0002).
 
 ### Notes
 

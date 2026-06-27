@@ -11,7 +11,7 @@ You can read more about qmd-gd's progress in the [CHANGELOG](CHANGELOG.md).
 ## Quick Start
 
 ```sh
-# qmd-gd is a private fork — install from the checkout. Runs on Node (>=22); no Bun needed.
+# qmd-gd is a private fork — install from the checkout. Runs on Node (>=22).
 git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
 npm install && npm run build && npm link   # exposes `qmd` globally
 # (the `/qmd-setup` skill walks a non-technical user through this end to end)
@@ -96,18 +96,23 @@ fall back to `qmd search` — pure BM25, zero inference.
 
 ### SDK / Library Usage
 
-Use QMD as a library in your own Node.js or Bun applications.
+Use QMD as a library in your own Node.js applications.
 
 #### Installation
 
+qmd-gd is a private fork and is **not published to npm**. Install it from the
+checkout and depend on it locally (e.g. `npm install /path/to/qmd-gd`, or add a
+`file:` dependency in your `package.json`).
+
 ```sh
-npm install @tobilu/qmd
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
+npm install && npm run build
 ```
 
 #### Quick Start
 
 ```typescript
-import { createStore } from '@tobilu/qmd'
+import { createStore } from 'qmd-gd'
 
 const store = await createStore({
   dbPath: './my-index.sqlite',
@@ -129,7 +134,7 @@ await store.close()
 `createStore()` accepts three modes:
 
 ```typescript
-import { createStore } from '@tobilu/qmd'
+import { createStore } from 'qmd-gd'
 
 // 1. Inline config — no files needed besides the DB
 const store = await createStore({
@@ -277,7 +282,6 @@ const result = await store.update({
 // Generate vector embeddings
 const embedResult = await store.embed({
   force: false,           // true to re-embed everything
-  chunkStrategy: "auto",  // "regex" (default) or "auto" (AST for code files)
   onProgress: ({ current, total, collection }) => {
     console.log(`Embedding ${current}/${total}`)
   },
@@ -308,7 +312,7 @@ import type {
   CollectionConfig,    // Inline config shape
   IndexStatus,         // From getStatus()
   IndexHealthInfo,     // From getIndexHealth()
-} from '@tobilu/qmd'
+} from 'qmd-gd'
 ```
 
 Utility exports:
@@ -319,7 +323,7 @@ import {
   addLineNumbers,              // Add line numbers to text
   DEFAULT_MULTI_GET_MAX_BYTES, // Default max file size for multiGet (64KB)
   Maintenance,                 // Database maintenance operations
-} from '@tobilu/qmd'
+} from 'qmd-gd'
 ```
 
 #### Lifecycle
@@ -409,13 +413,8 @@ judge.
 
 ### System Requirements
 
-- **Node.js** >= 22 — the default runtime; no Bun required
-- **Bun** >= 1.0.0 — optional alternative runtime
-- **macOS + Bun only**: Homebrew SQLite for sqlite-vec extension loading (not needed
-  under Node — better-sqlite3 bundles a capable SQLite)
-  ```sh
-  brew install sqlite
-  ```
+- **Node.js** >= 22 — the runtime. better-sqlite3 bundles a capable SQLite, so no
+  separate SQLite install is needed for the sqlite-vec extension.
 
 ### GGUF Model (via node-llama-cpp)
 
@@ -455,7 +454,7 @@ Supported model families:
 ## Installation
 
 qmd-gd is a private fork installed from the checkout (not published to npm). It runs on
-**Node (>=22)** — Bun is optional, not required.
+**Node (>=22)**.
 
 ```sh
 git clone https://github.com/dudgeon/qmd-gd
@@ -518,29 +517,13 @@ qmd embed
 # Force re-embed everything
 qmd embed -f
 
-# Enable AST-aware chunking for code files (TS, JS, Python, Go, Rust)
-qmd embed --chunk-strategy auto
-
-# Also works with query for consistent chunk selection
-qmd query "auth flow" --chunk-strategy auto
-
 # Memory control for large corpora / constrained systems
 qmd embed --max-docs-per-batch 50   # cap docs per embedding batch
 qmd embed --max-batch-mb 64         # cap batch size in MB
 ```
 
-**AST-aware chunking** (`--chunk-strategy auto`) uses tree-sitter to chunk code
-files at function, class, and import boundaries instead of arbitrary text
-positions. This produces higher-quality chunks and better search results for
-codebases. Markdown and other file types always use regex-based chunking
-regardless of strategy.
-
-The default is `regex` (existing behavior). Use `--chunk-strategy auto` to
-opt in. Run `qmd status` to verify which grammars are available.
-
-> **Note:** Tree-sitter grammars are optional dependencies. If they are not
-> installed, `--chunk-strategy auto` falls back to regex-only chunking
-> automatically. Tested on both Node.js and Bun.
+Chunking is **regex/markdown-only** (~900 tokens per chunk, 15% overlap,
+preferring markdown heading boundaries). There is no AST/code-aware chunking.
 
 ### Context Management
 
@@ -1046,18 +1029,7 @@ The squared distance decay means a heading 200 tokens back (score ~30) still bea
 
 **Code Fence Protection:** Break points inside code blocks are ignored—code stays together. If a code block exceeds the chunk size, it's kept whole when possible.
 
-**AST-Aware Chunking (Code Files):**
-
-For supported code files, QMD also parses the source with [tree-sitter](https://tree-sitter.github.io/) and adds AST-derived break points that are merged with the regex scores above:
-
-| AST Node | Score | Languages |
-|----------|-------|-----------|
-| Class / interface / struct / impl / trait | 100 | All |
-| Function / method | 90 | All |
-| Type alias / enum | 80 | All |
-| Import / use declaration | 60 | All |
-
-Supported for `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, and `.rs` files. Enable with `--chunk-strategy auto`. Markdown and other file types always use regex chunking.
+Chunking is regex/markdown-only — every file type uses the scoring algorithm above. There is no AST/tree-sitter code-aware chunking.
 
 ### Query Flow (Hybrid)
 
