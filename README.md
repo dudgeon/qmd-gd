@@ -154,10 +154,10 @@ const store3 = await createStore({ dbPath: './index.sqlite' })
 
 #### Search
 
-The unified `search()` method handles both simple queries and pre-expanded structured queries:
+The unified `search()` method handles both simple queries and agent-authored structured queries:
 
 ```typescript
-// Simple query — auto-expanded via LLM, then BM25 + vector + reranking
+// Simple query — seeds BM25 + vector retrieval (no generative expansion); returns RRF candidates
 const results = await store.search({ query: "authentication flow" })
 
 // With options
@@ -170,7 +170,7 @@ const results2 = await store.search({
   explain: true,
 })
 
-// Pre-expanded queries — skip auto-expansion, control each sub-query
+// Structured queries — you author each sub-query (the agent does the expansion)
 const results3 = await store.search({
   queries: [
     { type: 'lex', query: '"connection pool" timeout -redis' },
@@ -179,7 +179,7 @@ const results3 = await store.search({
   collections: ["docs", "notes"],
 })
 
-// Skip reranking for faster results
+// `rerank` is accepted but is a no-op in qmd-gd — results are always RRF-fused candidates
 const fast = await store.search({ query: "auth", rerank: false })
 ```
 
@@ -192,9 +192,9 @@ const lexResults = await store.searchLex("auth middleware", { limit: 10 })
 // Vector similarity search (embedding model, no reranking)
 const vecResults = await store.searchVector("how users log in", { limit: 10 })
 
-// Manual query expansion for full control
-const expanded = await store.expandQuery("auth flow", { intent: "user login" })
-const results4 = await store.search({ queries: expanded })
+// `expandQuery` is a no-op in qmd-gd (returns []) — kept for API compatibility.
+// Author your own sub-queries and pass them to search({ queries: [...] }) instead.
+const expanded = await store.expandQuery("auth flow", { intent: "user login" }) // => []
 ```
 
 #### Retrieval
@@ -325,7 +325,7 @@ import {
 #### Lifecycle
 
 ```typescript
-// Close the store — disposes LLM models and DB connection
+// Close the store — disposes the embedding model + DB connection
 await store.close()
 ```
 
@@ -333,71 +333,42 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 
 ## Architecture
 
-> **qmd-gd note:** the **Query Expansion** and **LLM Re-ranking** stages shown below
-> are **not run** in qmd-gd. The calling agent does both (it authors the typed
-> sub-queries and ranks the returned candidates). qmd-gd runs only the embedding model
-> for retrieval; the SDK's `rerank`/`expandQuery` surface is a no-op kept for
-> compatibility. The pipeline below documents the upstream design. See
+> **qmd-gd note:** qmd-gd is retrieval-only. It runs a single local model — the
+> **embedding** model — and never performs query expansion or LLM re-ranking. The
+> calling agent authors the typed `lex:/vec:/hyde:` sub-queries and ranks the
+> returned candidates itself. The SDK's `rerank`/`expandQuery` surface is a no-op
+> kept for compatibility. See
 > [`docs/adr/0002`](docs/adr/0002-delegate-generative-steps-to-the-agent.md).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         QMD Hybrid Search Pipeline                          │
+│                      qmd-gd Hybrid Retrieval Pipeline                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                               ┌─────────────────┐
-                              │   User Query    │
+                              │      Query      │
+                              │ (you author the │
+                              │  sub-queries)   │
                               └────────┬────────┘
                                        │
                         ┌──────────────┴──────────────┐
                         ▼                             ▼
-               ┌────────────────┐            ┌────────────────┐
-               │ Query Expansion│            │  Original Query│
-               │  (fine-tuned)  │            │   (×2 weight)  │
-               └───────┬────────┘            └───────┬────────┘
-                       │                             │
-                       │ 2 alternative queries       │
-                       └──────────────┬──────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              ▼                       ▼                       ▼
-     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-     │ Original Query  │     │ Expanded Query 1│     │ Expanded Query 2│
-     └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
-              │                       │                       │
-      ┌───────┴───────┐       ┌───────┴───────┐       ┌───────┴───────┐
-      ▼               ▼       ▼               ▼       ▼               ▼
-  ┌───────┐       ┌───────┐ ┌───────┐     ┌───────┐ ┌───────┐     ┌───────┐
-  │ BM25  │       │Vector │ │ BM25  │     │Vector │ │ BM25  │     │Vector │
-  │(FTS5) │       │Search │ │(FTS5) │     │Search │ │(FTS5) │     │Search │
-  └───┬───┘       └───┬───┘ └───┬───┘     └───┬───┘ └───┬───┘     └───┬───┘
-      │               │         │             │         │             │
-      └───────┬───────┘         └──────┬──────┘         └──────┬──────┘
-              │                        │                       │
-              └────────────────────────┼───────────────────────┘
-                                       │
-                                       ▼
-                          ┌───────────────────────┐
-                          │   RRF Fusion + Bonus  │
-                          │  Original query: ×2   │
-                          │  Top-rank bonus: +0.05│
-                          │     Top 30 Kept       │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │    LLM Re-ranking     │
-                          │  (qwen3-reranker)     │
-                          │  Yes/No + logprobs    │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │  Position-Aware Blend │
-                          │  Top 1-3:  75% RRF    │
-                          │  Top 4-10: 60% RRF    │
-                          │  Top 11+:  40% RRF    │
-                          └───────────────────────┘
+               ┌─────────────────┐           ┌──────────────────────┐
+               │   BM25 (FTS5)   │           │ Vector Search        │
+               │ keyword ranking │           │ (embedding model)    │
+               └────────┬────────┘           └──────────┬───────────┘
+                        │                               │
+                        └───────────────┬───────────────┘
+                                        ▼
+                          ┌───────────────────────────┐
+                          │        RRF Fusion         │
+                          │  score = Σ 1/(k+rank+1)    │
+                          └─────────────┬─────────────┘
+                                        ▼
+                          ┌───────────────────────────┐
+                          │  Ranked candidate docs    │
+                          │  (the agent ranks these)  │
+                          └───────────────────────────┘
 ```
 
 ## Score Normalization & Fusion
@@ -408,24 +379,22 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 |---------|-----------|------------|-------|
 | **FTS (BM25)** | SQLite FTS5 BM25 | `Math.abs(score)` | 0 to ~25+ |
 | **Vector** | Cosine distance | `1 / (1 + distance)` | 0.0 to 1.0 |
-| **Reranker** | LLM 0-10 rating | `score / 10` | 0.0 to 1.0 |
 
 ### Fusion Strategy
 
-The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware blending:
+The `query` command uses **Reciprocal Rank Fusion (RRF)**. The RRF score is the
+final score — qmd-gd does not re-rank:
 
-1. **Query Expansion**: Original query (×2 for weighting) + 1 LLM variation
-2. **Parallel Retrieval**: Each query searches both FTS and vector indexes
-3. **RRF Fusion**: Combine all result lists using `score = Σ(1/(k+rank+1))` where k=60
-4. **Top-Rank Bonus**: Documents ranking #1 in any list get +0.05, #2-3 get +0.02
-5. **Top-K Selection**: Take top 30 candidates for reranking
-6. **Re-ranking**: LLM scores each document (yes/no with logprobs confidence)
-7. **Position-Aware Blending**:
-   - RRF rank 1-3: 75% retrieval, 25% reranker (preserves exact matches)
-   - RRF rank 4-10: 60% retrieval, 40% reranker
-   - RRF rank 11+: 40% retrieval, 60% reranker (trust reranker more)
+1. **Parallel Retrieval**: Each sub-query searches both FTS and vector indexes
+2. **RRF Fusion**: Combine all result lists using `score = Σ(1/(k+rank+1))` where k=60
+3. **Top-Rank Bonus**: Documents ranking #1 in any list get +0.05, #2-3 get +0.02
+4. **Top-K Selection**: Return the top candidates, ordered by RRF score
 
-**Why this approach**: Pure RRF can dilute exact matches when expanded queries don't match. The top-rank bonus preserves documents that score #1 for the original query. Position-aware blending prevents the reranker from destroying high-confidence retrieval results.
+**Why this approach**: RRF fuses keyword and semantic signals into a single robust
+ranking without needing a generative model. The top-rank bonus preserves documents
+that score #1 in any individual sub-query. Because qmd-gd delegates re-ranking to
+the calling agent, the returned candidates are the RRF-fused set for the agent to
+judge.
 
 ### Score Interpretation
 
@@ -440,9 +409,10 @@ The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware bl
 
 ### System Requirements
 
-- **Node.js** >= 22
-- **Bun** >= 1.0.0
-- **macOS**: Homebrew SQLite (for extension support)
+- **Node.js** >= 22 — the default runtime; no Bun required
+- **Bun** >= 1.0.0 — optional alternative runtime
+- **macOS + Bun only**: Homebrew SQLite for sqlite-vec extension loading (not needed
+  under Node — better-sqlite3 bundles a capable SQLite)
   ```sh
   brew install sqlite
   ```
@@ -620,13 +590,11 @@ global_context: "Knowledge base for my projects"
 # Overridden by the QMD_EDITOR_URI env var. See "Editor Links" below.
 editor_uri: "vscode://file{path}:{line}:{col}"
 
-# Override the default GGUF models per role. Optional — omit to use the
-# built-in defaults. `qmd init` writes this block pre-filled with the
-# resolved defaults. See "Model Configuration" for the default URIs.
+# Override the default embedding GGUF model. Optional — omit to use the
+# built-in default. See "Model Configuration" for the default URI. (qmd-gd runs
+# only the embedding model; any `rerank`/`generate` entries are ignored.)
 models:
   embed: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
-  rerank: "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf"
-  generate: "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf"
 
 # One entry per collection. The key is the collection name.
 collections:
@@ -647,7 +615,7 @@ collections:
 |-----|-------|---------|
 | `global_context` | top-level | Context prepended for every collection. Set via `qmd context add /`. |
 | `editor_uri` (alias `editor_uri_template`) | top-level | Hyperlink template for clickable result paths; `QMD_EDITOR_URI` overrides. |
-| `models.embed` / `.rerank` / `.generate` | top-level | HuggingFace GGUF URIs (`hf:<user>/<repo>/<file>`) overriding the built-in defaults per role. |
+| `models.embed` | top-level | HuggingFace GGUF URI (`hf:<user>/<repo>/<file>`) overriding the built-in embedding model. (Any `rerank`/`generate` keys are ignored by qmd-gd.) |
 | `collections.<name>.path` | per-collection | Absolute directory to index. |
 | `collections.<name>.pattern` | per-collection | Glob mask. Set via `qmd collection add --mask`. Default `**/*.md`. |
 | `collections.<name>.ignore` | per-collection | Glob patterns excluded from indexing — useful to stop nested collections double-indexing. **YAML-only — no CLI command sets this.** Additive with QMD's built-in exclusions (`node_modules`, `.git`, `.cache`, `vendor`, `dist`, `build`), which you cannot un-ignore. |
@@ -698,7 +666,8 @@ qmd collection update-cmd wiki                         # clear
 ├──────────┬───────────────────────────────────────────────────────┤
 │ search   │ BM25 full-text search only                           │
 │ vsearch  │ Vector semantic search only                          │
-│ query    │ Hybrid: FTS + Vector + Query Expansion + Re-ranking  │
+│ query    │ Hybrid: FTS + Vector + RRF fusion                    │
+│          │ (you author lex/vec/hyde; you rank the candidates)   │
 └──────────┴───────────────────────────────────────────────────────┘
 ```
 
@@ -709,7 +678,7 @@ qmd search "authentication flow"
 # Vector search (semantic similarity)
 qmd vsearch "how to login"
 
-# Hybrid search with re-ranking (best quality)
+# Hybrid search — BM25 + vector fused with RRF (best recall)
 qmd query "user authentication"
 ```
 
@@ -729,8 +698,8 @@ and `deep-search` (→ `query`).
 --explain          # Include retrieval score traces (query, JSON/CLI output)
 --index <name>     # Use named index
 --intent "<text>"  # Disambiguation context (e.g. "web page load times")
---no-rerank        # Skip LLM reranking (RRF scores only; faster on CPU)
--C, --candidate-limit <n>  # Max candidates to rerank (default: 40)
+--no-rerank        # No-op (kept for compatibility; qmd-gd never reranks — results are always RRF scores)
+-C, --candidate-limit <n>  # Max candidates returned by fusion (default: 40)
 --full-path        # Emit on-disk filesystem paths instead of qmd:// URIs
 
 # Output formats (for search and multi-get)
@@ -837,7 +806,7 @@ qmd search --md --full "error handling"
 # JSON output for scripting
 qmd query --json "quarterly reports"
 
-# Inspect how each result was scored (RRF + rerank blend)
+# Inspect how each result was scored (RRF fusion math; rerank score is always 0)
 qmd query --json --explain "quarterly reports"
 
 # Use separate index for different knowledge base
@@ -846,7 +815,8 @@ qmd --index work search "quarterly reports"
 
 The `--explain` flag attaches a score breakdown to each result: the FTS/vector
 backend scores plus the RRF fusion math (rank, weight, top-rank bonus) and every
-sub-query's contribution. Abbreviated:
+sub-query's contribution. The final score is the RRF score; the rerank score is
+always `0` in qmd-gd. Abbreviated:
 
 ```json
 {
@@ -863,7 +833,7 @@ sub-query's contribution. Abbreviated:
       "topRankBonus": 0.05,
       "totalScore": 0.173,
       "contributions": [
-        { "source": "fts", "queryType": "original", "query": "reranking",
+        { "source": "fts", "queryType": "original", "query": "quarterly reports",
           "rank": 1, "weight": 2, "backendScore": 0.892, "rrfContribution": 0.0328 }
       ]
     }
@@ -921,7 +891,7 @@ qmd cleanup
 
 ### Benchmarking
 
-Measure search quality across all four backends with `qmd bench` and a fixture file
+Measure search quality across the search backends with `qmd bench` and a fixture file
 of queries with known-relevant documents.
 
 **From a git checkout**, an example fixture and its test corpus ship in the repo:
@@ -947,18 +917,17 @@ qmd bench src/bench/fixtures/example.json --json
 > qmd bench my-fixture.json -c my-collection
 > ```
 
-Each query runs against four backends, reporting precision@k, recall, MRR, and F1:
+Each query runs against these backends, reporting precision@k, recall, MRR, and F1:
 
 | Backend | What it tests | LLM required |
 |---------|---------------|--------------|
 | `bm25` | Keyword search only (FTS5) | No |
 | `vector` | Semantic similarity only | Embedding model |
-| `hybrid` | BM25 + vector fusion (no reranking) | Embedding model |
-| `full` | Full pipeline with LLM reranking | All three models |
+| `hybrid` | BM25 + vector fusion (RRF) | Embedding model |
 
 **Score interpretation:** `1.00` = perfect (all expected docs in top results),
 `0.00` = complete miss. The example fixture typically shows bm25 ~0.50, vector
-~0.70, and hybrid/full ~1.00 — a concrete demonstration of why hybrid search beats
+~0.70, and hybrid ~1.00 — a concrete demonstration of why hybrid search beats
 either backend alone.
 
 **Custom fixtures** are JSON:
@@ -1001,7 +970,7 @@ documents       -- Markdown content with metadata and docid (6-char hash)
 documents_fts   -- FTS5 full-text index
 content_vectors -- Embedding chunks (hash, seq, pos, 900 tokens each)
 vectors_vec     -- sqlite-vec vector index (hash_seq key)
-llm_cache       -- Cached LLM responses (query expansion, rerank scores)
+llm_cache       -- Cached embedding/query results
 ```
 
 ## Environment Variables
@@ -1013,7 +982,7 @@ llm_cache       -- Cached LLM responses (query expansion, rerank scores)
 | `QMD_CONFIG_DIR` | unset | Override the config directory outright (takes precedence over `XDG_CONFIG_HOME`) |
 | `QMD_LLAMA_GPU` | `auto` | Force llama.cpp GPU backend (`metal`, `vulkan`, `cuda`) or disable GPU with `false` |
 | `QMD_FORCE_CPU` | unset | Set to `1`/`true` to force CPU mode before any CUDA/Vulkan/Metal probing. Equivalent CLI flag: `--no-gpu`. |
-| `QMD_EMBED_PARALLELISM` | automatic | Override embedding/reranking context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |
+| `QMD_EMBED_PARALLELISM` | automatic | Override embedding context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |
 
 ## How It Works
 
@@ -1092,55 +1061,41 @@ Supported for `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, and `.rs` files. Enabl
 
 ### Query Flow (Hybrid)
 
+The agent authors the sub-queries; qmd-gd embeds, retrieves, and fuses them with RRF.
+
 ```
-Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
+Sub-queries ──► [lex, vec, hyde, …]   (authored by the agent)
                 │
       ┌─────────┴─────────┐
       ▼                   ▼
-   For each query:     FTS (BM25)
+   Vector Search       FTS (BM25)
+   (embedding model)      │
+      │                   ▼
+      ▼               Ranked List
+   Ranked List            │
       │                   │
-      ▼                   ▼
-   Vector Search      Ranked List
-      │
-      ▼
-   Ranked List
-      │
       └─────────┬─────────┘
                 ▼
          RRF Fusion (k=60)
-         Original query ×2 weight
          Top-rank bonus: +0.05/#1, +0.02/#2-3
                 │
                 ▼
-         Top 30 candidates
-                │
-                ▼
-         LLM Re-ranking
-         (yes/no + logprob confidence)
-                │
-                ▼
-         Position-Aware Blend
-         Rank 1-3:  75% RRF / 25% reranker
-         Rank 4-10: 60% RRF / 40% reranker
-         Rank 11+:  40% RRF / 60% reranker
-                │
-                ▼
-         Final Results
+         Ranked candidate docs
+         (the agent ranks these)
 ```
 
 ## Model Configuration
 
-The default models are defined in `src/llm.ts` as HuggingFace URIs:
+qmd-gd runs a single local model — the embedding model — defined in `src/llm.ts` as
+a HuggingFace URI:
 
 ```typescript
 const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
 ```
 
-Override them per-role without touching source via the `models:` block in
-`index.yml` (see [Configuring `index.yml`](#configuring-indexyml)) or the
-`QMD_EMBED_MODEL` env var. Re-run `qmd embed` after changing the embedding model.
+Override it without touching source via the `models.embed` key in `index.yml`
+(see [Configuring `index.yml`](#configuring-indexyml)) or the `QMD_EMBED_MODEL`
+env var. Re-run `qmd embed` after changing the embedding model.
 
 ### EmbeddingGemma Prompt Format
 
@@ -1151,14 +1106,6 @@ Override them per-role without touching source via the `models:` block in
 // For documents
 "title: {title} | text: {content}"
 ```
-
-### Qwen3-Reranker
-
-Uses node-llama-cpp's `createRankingContext()` and `rankAndSort()` API for cross-encoder reranking. Returns documents sorted by relevance score (0.0 - 1.0).
-
-### Qwen3 (Query Expansion)
-
-Used for generating query variations via `LlamaChatSession`.
 
 ## License
 
