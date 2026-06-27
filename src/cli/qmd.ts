@@ -1478,9 +1478,27 @@ function formatLsTime(date: Date): string {
 }
 
 // Collection management commands
-function collectionList(): void {
+function collectionList(asJson = false): void {
   const db = getDb();
   const collections = listCollections(db);
+
+  if (asJson) {
+    // Machine-readable scope: which collections an unscoped query (and /ask-qmd)
+    // search by default. Consumed by agents and the Duo scope playground.
+    const payload = collections.map((coll) => {
+      const yamlColl = getCollectionFromYaml(coll.name);
+      return {
+        name: coll.name,
+        pattern: coll.glob_pattern,
+        docCount: coll.active_count,
+        includeByDefault: yamlColl?.includeByDefault !== false,
+        lastModified: coll.last_modified ?? null,
+      };
+    });
+    console.log(JSON.stringify(payload));
+    closeDb();
+    return;
+  }
 
   if (collections.length === 0) {
     console.log("No collections found. Run 'qmd collection add .' to create one.");
@@ -4014,7 +4032,7 @@ if (isMain) {
       const subcommand = cli.args[0];
       switch (subcommand) {
         case "list": {
-          collectionList();
+          collectionList(Boolean(cli.values.json));
           break;
         }
 

@@ -103,7 +103,10 @@ from your default-scoped knowledge base, no flags to remember:
 
 It authors the structured query, retrieves + reads the top sources, and answers with citations.
 The scope is whatever you marked default-included at setup (`qmd collection include/exclude`).
-Under the hood it runs the same loop the `qmd` skill teaches:
+If you run setup inside **Duo**, it opens a small **scope playground** showing exactly what
+`/ask-qmd` searches, with a one-click "Change scope" button (it spawns a Claude tab to retune
+`include`/`exclude` and regenerates the view). Under the hood `/ask-qmd` runs the same loop the
+`qmd` skill teaches:
 
 The skill teaches the agent-driven loop: **author a structured query → retrieve →
 rank the candidates yourself.** qmd-gd does no query expansion or reranking with a

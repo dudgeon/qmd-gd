@@ -49,6 +49,13 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   `ask-qmd` (qmd-setup stays checkout-local), and the `qmd-setup` skill gained a "default ask
   scope" step that sets the scope via `qmd collection include/exclude` (no separate config —
   the scope is qmd's include/exclude state, so it can't drift).
+- **Added a Duo "scope playground."** `qmd collection list --json` now emits the per-collection
+  scope (`includeByDefault` + doc counts). A generator
+  (`.claude/skills/qmd-setup/scripts/scope-playground.mjs`) renders that into an HTML canvas
+  under `~/.claude/duo/` showing in-scope vs. out-of-scope collections, with a **"Change scope"**
+  button (`claude:spawn`) that opens a fresh Claude tab to retune `include`/`exclude` and
+  regenerate the view. `qmd-setup` opens it automatically on success **when run inside Duo**
+  (`DUO_SESSION` set); otherwise it's skipped.
 - Added `docs/adr/` recording the four architecture decisions.
 
 ### Removed

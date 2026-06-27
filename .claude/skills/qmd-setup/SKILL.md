@@ -192,7 +192,26 @@ And once the `ask-qmd` skill is linked (step 2), confirm the turnkey path from a
 session: **`/ask-qmd <a question the corpus can answer>`** — it should return a cited answer,
 not just a list of files.
 
-### 8. Schedule automatic refresh (optional)
+### 8. Open the scope playground (Duo only)
+
+If setup is running inside **Duo** — the `DUO_SESSION` environment variable is set — open a
+small visual **scope playground** so the user can see what `/ask-qmd` searches and change it
+with one click. **Only when Duo is present**; skip silently otherwise. This is local and safe
+to run yourself (it reads `qmd collection list --json` and writes one HTML file — no network,
+no index changes):
+
+```bash
+if [ -n "$DUO_SESSION" ]; then
+  out="$(node .claude/skills/qmd-setup/scripts/scope-playground.mjs)"   # renders the HTML; prints its path
+  duo open --reveal "$out"                                             # shows it in Duo's browser pane
+fi
+```
+
+The playground lists in-scope vs. out-of-scope collections and has a **"Change scope…"** button
+that opens a fresh Claude tab to adjust qmd's `include`/`exclude` state and regenerate the view.
+(The HTML is written under `~/.claude/duo/` so Duo allows its button to fire.)
+
+### 9. Schedule automatic refresh (optional)
 
 Keep the index fresh without manual re-runs. **Preferred:** Duo's scheduler
 running a plain shell command (requires Duo's shell-job cron support):

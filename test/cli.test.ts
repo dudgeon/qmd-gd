@@ -479,6 +479,26 @@ describe("CLI Add Command", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Collection 'fixtures' created successfully");
   });
+
+  test("collection list --json reports scope (includeByDefault) for the playground", async () => {
+    await runQmd(["collection", "add", "."]);
+
+    const listed = await runQmd(["collection", "list", "--json"]);
+    expect(listed.exitCode).toBe(0);
+    const cols = JSON.parse(listed.stdout.trim());
+    expect(Array.isArray(cols)).toBe(true);
+    const fixtures = cols.find((col: { name: string }) => col.name === "fixtures");
+    expect(fixtures).toBeTruthy();
+    expect(fixtures.includeByDefault).toBe(true);
+    expect(typeof fixtures.docCount).toBe("number");
+    expect(fixtures.pattern).toBeTruthy();
+
+    // Excluding flips the scope flag the playground reads.
+    await runQmd(["collection", "exclude", "fixtures"]);
+    const after = await runQmd(["collection", "list", "--json"]);
+    const excluded = JSON.parse(after.stdout.trim()).find((col: { name: string }) => col.name === "fixtures");
+    expect(excluded.includeByDefault).toBe(false);
+  });
 });
 
 describe("CLI Status Command", () => {
