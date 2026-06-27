@@ -12,6 +12,13 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// No runtime Node-version guard lives here on purpose: this launcher is an
+// extensionless ESM file, which Node < 20 cannot even load (it throws
+// ERR_UNKNOWN_FILE_EXTENSION before any code runs), so a guard here could never
+// fire for the versions it would target. The Node >= 20 floor is enforced at
+// install time by `.npmrc` engine-strict, and `qmd doctor` reports the running
+// Node version against that floor.
+
 // Resolve symlinks so global installs (npm link / npm install -g) can find
 // the actual package directory instead of the global bin directory.
 const self = realpathSync(fileURLToPath(import.meta.url));

@@ -26,7 +26,7 @@ Claude Code.
 
 ```sh
 # qmd-gd is a skills folder — clone OR download the repo ZIP from GitHub, then build.
-# Runs on Node (>=22). Non-developers: see "Get started" above and just say "help me get set up".
+# Runs on Node (>=20). Non-developers: see "Get started" above and just say "help me get set up".
 git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd   # or: download the ZIP from GitHub and unzip
 npm install && npm run build && npm link   # exposes `qmd` globally
 
@@ -443,7 +443,7 @@ judge.
 
 ### System Requirements
 
-- **Node.js** >= 22 — the runtime. better-sqlite3 bundles a capable SQLite, so no
+- **Node.js** >= 20 — the runtime. better-sqlite3 bundles a capable SQLite, so no
   separate SQLite install is needed for the sqlite-vec extension.
 
 ### GGUF Model (via node-llama-cpp)
@@ -484,7 +484,7 @@ Supported model families:
 ## Installation
 
 qmd-gd is a private fork installed from the checkout (not published to npm). It runs on
-**Node (>=22)**.
+**Node (>=20)**.
 
 ```sh
 git clone https://github.com/dudgeon/qmd-gd

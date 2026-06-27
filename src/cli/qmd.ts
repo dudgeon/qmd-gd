@@ -3288,6 +3288,10 @@ function showHelp(): void {
   console.log(`Index: ${getDbPath()}`);
 }
 
+// Minimum supported Node major. Keep in sync with package.json "engines.node"
+// and the guard in bin/qmd.
+const MIN_NODE_MAJOR = 20;
+
 function doctorCheck(label: string, ok: boolean, details: string): void {
   const mark = ok ? `${c.green}✓${c.reset}` : `${c.yellow}⚠${c.reset}`;
   console.log(`${mark} ${label}: ${details}`);
@@ -3751,6 +3755,17 @@ async function showDoctor(): Promise<void> {
   console.log(`${c.bold}QMD Doctor${c.reset}\n`);
   console.log(`Index: ${getDbPath()}`);
   console.log(`Runtime: better-sqlite3`);
+
+  const doctorNodeMajor = Number(process.versions.node.split(".")[0]);
+  const nodeOk = Number.isFinite(doctorNodeMajor) && doctorNodeMajor >= MIN_NODE_MAJOR;
+  doctorCheck(
+    "Node runtime",
+    nodeOk,
+    nodeOk ? `v${process.versions.node}` : `v${process.versions.node} — qmd needs Node >= ${MIN_NODE_MAJOR}`,
+  );
+  if (!nodeOk) {
+    nextSteps.push(`Upgrade to Node >= ${MIN_NODE_MAJOR} (you are on v${process.versions.node}), then run 'npm rebuild'`);
+  }
 
   try {
     const row = db.prepare(`SELECT sqlite_version() AS version`).get() as { version: string };

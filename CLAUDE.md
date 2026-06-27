@@ -1,6 +1,6 @@
 # QMD - Query Markup Documents (qmd-gd fork)
 
-qmd-gd runs on **Node (>=22)** (`npm install`, `npm run build`, `npm link`). After a
+qmd-gd runs on **Node (>=20)** (`npm install`, `npm run build`, `npm link`). After a
 Node major upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec,
 node-llama-cpp) match the new ABI.
 

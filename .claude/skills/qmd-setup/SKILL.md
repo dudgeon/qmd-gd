@@ -78,7 +78,7 @@ native functional check passes once `qmd` is installed).
 ### 1. Build & link the CLI (if `qmd` is not on PATH)
 
 From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a worktree). qmd-gd runs on
-**Node (>=22)**:
+**Node (>=20)**:
 
 ```bash
 npm install        # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node

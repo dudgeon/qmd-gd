@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("Node ESM entrypoints", () => {
-  test("CLI --index path normalizes via setIndexName/setConfigIndexName under Node 22+", () => {
+  test("CLI --index path normalizes via setIndexName/setConfigIndexName under Node 20+", () => {
     execFileSync(process.execPath, ["scripts/build.mjs"], {
       cwd: repoRoot,
       encoding: "utf-8",

@@ -21,9 +21,12 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 - **Embeddings stay local** on the default model — the one inference step that can't
   be delegated to the agent. (ADR 0001)
 - `qmd pull` and `qmd doctor` now fetch/check only the embedding model.
-- **Runs on Node (>=22).** Install is `npm install && npm run build && npm link`.
-  Verified end-to-end on Node (index/embed/vector search all work). Fork identity is
-  private (`dudgeon/qmd-gd`); not published to npm.
+- **Runs on Node (>=20).** Install is `npm install && npm run build && npm link`.
+  `bin/qmd` fails fast with a clear message on older Node, `.npmrc engine-strict`
+  makes `npm install` refuse an unsupported Node, and `qmd doctor` reports the Node
+  version — no more cryptic native/ABI failures. Verified end-to-end on Node 20 and
+  22 (full suite green). Fork identity is private (`dudgeon/qmd-gd`); not published
+  to npm.
 - Fixed `.gitignore` so the `docs/adr/` records are actually tracked (the `*.md` rule
   had been excluding them).
 - Rewrote the `qmd` skill around the agent-driven loop (author structured query →
@@ -70,7 +73,7 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 - **Claude Code plugin packaging.** `.claude-plugin/marketplace.json` and the
   `.agents/skills` copy + bootstrap-stub install path are gone — qmd-gd is a plain skills
   folder now (see Changes). Also dropped the now-dead architecture image reference from the README.
-- **Bun support.** qmd-gd is Node-only (>=22); the Bun runtime path, lockfile, and
+- **Bun support.** qmd-gd is Node-only (>=20); the Bun runtime path, lockfile, and
   launcher detection are gone.
 - **AST/tree-sitter code chunking.** The `--chunk-strategy auto` flag and the
   `web-tree-sitter` grammars are removed — chunking is regex/markdown-only.
