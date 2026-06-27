@@ -4,8 +4,9 @@ qmd-gd runs on **Node (>=22)** (`npm install`, `npm run build`, `npm link`). Aft
 Node major upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec,
 node-llama-cpp) match the new ABI.
 
-qmd-gd ships its skills as plain folders under `.claude/skills/` (no Claude Code plugin).
-When this folder is opened in Claude Code, the `qmd` and `qmd-setup` skills auto-load.
+qmd-gd ships its skills under `.claude/skills/` and the `qmd-retrieve` subagent under
+`.claude/agents/` (no Claude Code plugin). When this folder is opened in Claude Code,
+the bundled skills (`qmd`, `qmd-setup`, `ask-qmd`) and the `qmd-retrieve` subagent auto-load.
 
 ## Getting set up
 
