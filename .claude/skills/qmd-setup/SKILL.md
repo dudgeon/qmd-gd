@@ -203,7 +203,7 @@ no index changes):
 ```bash
 if [ -n "$DUO_SESSION" ]; then
   out="$(node .claude/skills/qmd-setup/scripts/scope-playground.mjs)"   # renders the HTML; prints its path
-  duo open --reveal "$out"                                             # shows it in Duo's browser pane
+  duo open --reveal "$out" && duo reload                               # show it (reload re-renders if already open)
 fi
 ```
 

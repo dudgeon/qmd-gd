@@ -48,8 +48,9 @@ function changeScopePrompt(inScope, outScope) {
     `Currently OUT of scope (excluded): ${names(outScope)}.`,
     "Ask me which collections to add to or remove from the default scope, then run the",
     "matching `qmd collection include <name>` / `qmd collection exclude <name>` commands.",
-    `Then refresh this view: run \`node ${SELF}\` (it rewrites the playground and prints`,
-    "its path) and `duo open --reveal` that path. Tell me when it's updated.",
+    `Then refresh this view: run \`node ${SELF}\` (it rewrites the playground file), then`,
+    "`duo open --reveal` that file AND `duo reload` — opening an already-open tab only re-focuses it;",
+    "reload re-renders it. Tell me when it's updated.",
   ].join(" ");
 }
 
