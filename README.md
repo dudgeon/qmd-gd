@@ -105,10 +105,11 @@ It picks **instant keyword search** for exact-word questions (names, titles, IDs
 say "quick") and **thorough hybrid search** for conceptual ones, reads the top sources, and
 answers with citations. **In Duo** it then offers to open the top source and scroll to / highlight
 the answer span. The scope is whatever you marked default-included at setup
-(`qmd collection include/exclude`). If you run setup inside Duo, it also opens a small **scope
-playground** showing exactly what `/ask-qmd` searches, with a one-click "Change scope" button (it
-spawns a Claude tab to retune `include`/`exclude` and regenerates the view). Under the hood
-`/ask-qmd` runs the same loop the `qmd` skill teaches:
+(`qmd collection include/exclude`). If you run setup inside Duo, it also opens a **qmd dashboard**
+— an Atelier-styled canvas showing index status (doc/vector counts, last indexed/embedded,
+pending embedding, size), what `/ask-qmd` searches, and a short "how qmd works" explainer — with
+**Change scope** (spawns a Claude tab to retune `include`/`exclude`) and **Refresh index**
+buttons. Under the hood `/ask-qmd` runs the same loop the `qmd` skill teaches:
 
 The skill teaches the agent-driven loop: **author a structured query → retrieve →
 rank the candidates yourself.** qmd-gd does no query expansion or reranking with a
@@ -516,8 +517,9 @@ qmd collection add . --name myproject
 # Create a collection with explicit path and custom glob mask
 qmd collection add ~/Documents/notes --name notes --mask "**/*.md"
 
-# List all collections
+# List all collections (--json adds scope: includeByDefault + doc counts)
 qmd collection list
+qmd collection list --json
 
 # Remove a collection
 qmd collection remove myproject
@@ -862,6 +864,10 @@ always `0` in qmd-gd. Abbreviated:
 ```sh
 # Show index status and collections with contexts
 qmd status
+
+# Machine-readable index health (docs, vectors, last-indexed/embedded timestamps,
+# per-collection scope, embedding model) — for agents and the Duo dashboard
+qmd status --json
 
 # Re-index all collections. If a collection has a configured update command
 # (e.g. `git pull`), it runs first — set one with `qmd collection update-cmd`.

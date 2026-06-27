@@ -62,7 +62,8 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   a fresh Claude tab to retune `include`/`exclude`, then `duo reload`) and **Refresh index**
   (`terminal:send` stages `qmd update && qmd embed`). `qmd-setup` opens it automatically on
   success **when run inside Duo** (`DUO_SESSION` set); otherwise it's skipped.
-- Added `docs/adr/` recording the four architecture decisions.
+- Added `docs/adr/` recording the architecture decisions (ADR 0001–0005, incl. the
+  plugin→skills unbundle in 0005).
 
 ### Removed
 

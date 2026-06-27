@@ -15,3 +15,4 @@ Each ADR uses: **Status · Context · Decision · Alternatives considered · Con
 | [0002](0002-delegate-generative-steps-to-the-agent.md) | Delegate query expansion and reranking to the calling agent | Accepted |
 | [0003](0003-remove-mcp.md) | Remove the MCP server; CLI + skills are the interface | Accepted |
 | [0004](0004-indexing-via-cron-and-optional-playground.md) | Indexing via cron + optional Duo playground; never auto-run by Claude | Accepted |
+| [0005](0005-skills-not-a-plugin.md) | Ship as plain skills (`.claude/skills/`), not a Claude Code plugin | Accepted |

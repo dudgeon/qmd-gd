@@ -26,7 +26,7 @@ The only setup helper you may run yourself is the local, network-free probe
 
 ```sh
 qmd collection add . --name <n>   # Create/index collection
-qmd collection list               # List all collections with details
+qmd collection list [--json]      # List collections; --json adds scope (includeByDefault) + counts
 qmd collection remove <name>      # Remove a collection by name
 qmd collection rename <old> <new> # Rename a collection
 qmd init                          # Create a project-local .qmd index
@@ -37,12 +37,12 @@ qmd context check                 # Check for collections/paths missing context
 qmd context rm <path>             # Remove context
 qmd get <file>[:from[:count]]     # Get by path or docid (#abc123); optional line range
 qmd multi-get <pattern>           # Get multiple docs by glob or comma-separated list
-qmd status                        # Show index status and collections
+qmd status [--json]               # Index status (docs, vectors, freshness); --json for agents/dashboard
 qmd doctor                        # Diagnose config, index, model, and device issues
 qmd update                        # Re-index collections; configured update hooks run first
-qmd embed                         # Generate vector embeddings (uses node-llama-cpp)
-qmd query <query>                 # Search with query expansion + reranking (recommended)
-qmd search <query>                # Full-text keyword search (BM25, no LLM)
+qmd embed                         # Generate vector embeddings (local embedding model)
+qmd query <query>                 # Hybrid BM25 + vector (RRF); you author lex:/vec:/hyde: and rank candidates
+qmd search <query>                # Full-text keyword search (BM25, no model)
 qmd vsearch <query>               # Vector similarity search (no reranking)
 qmd bench <fixture.json>          # Run search-quality benchmarks
 ```
