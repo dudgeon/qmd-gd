@@ -1,6 +1,7 @@
 node_modules/
 dist/
-.npmrc
+# .npmrc is tracked: it carries the project's engine-strict setting (no secrets).
+# Put any auth tokens in your user-level ~/.npmrc, not here.
 *.sqlite
 .DS_Store
 archive/
