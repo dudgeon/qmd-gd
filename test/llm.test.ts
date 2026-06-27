@@ -18,22 +18,18 @@ import {
   resolveParallelismOverride,
   resolveSafeParallelism,
   resolveEmbedModel,
-  resolveGenerateModel,
-  resolveRerankModel,
-  resolveModels,
   withLLMSession,
   canUnloadLLM,
   SessionReleasedError,
-  type RerankDocument,
   type ILLMSession,
 } from "../src/llm.js";
 
 describe("model name resolution", () => {
+  // qmd-gd runs only the local embedding model; generative query expansion and
+  // reranking are delegated to the calling agent (ADR 0002).
   function withModelEnv(env: Record<string, string | undefined>, fn: () => void): void {
     const previous = {
       QMD_EMBED_MODEL: process.env.QMD_EMBED_MODEL,
-      QMD_GENERATE_MODEL: process.env.QMD_GENERATE_MODEL,
-      QMD_RERANK_MODEL: process.env.QMD_RERANK_MODEL,
     };
     try {
       for (const [key, value] of Object.entries(env)) {
@@ -49,38 +45,22 @@ describe("model name resolution", () => {
     }
   }
 
-  test("all model roles resolve config hints before env fallbacks", () => {
+  test("embed model resolves config hint before env fallback", () => {
     withModelEnv({
       QMD_EMBED_MODEL: "env-embed",
-      QMD_GENERATE_MODEL: "env-generate",
-      QMD_RERANK_MODEL: "env-rerank",
     }, () => {
-      const config = {
-        embed: "config-embed",
-        generate: "config-generate",
-        rerank: "config-rerank",
-      };
-      expect(resolveEmbedModel(config)).toBe("config-embed");
-      expect(resolveGenerateModel(config)).toBe("config-generate");
-      expect(resolveRerankModel(config)).toBe("config-rerank");
-      expect(resolveModels(config)).toEqual(config);
+      expect(resolveEmbedModel({ embed: "config-embed" })).toBe("config-embed");
     });
   });
 
-  test("LlamaCpp constructor uses the same resolver as status/embed/query helpers", () => {
+  test("LlamaCpp constructor uses the same embed resolver as status/embed helpers", () => {
     withModelEnv({
       QMD_EMBED_MODEL: "env-embed",
-      QMD_GENERATE_MODEL: "env-generate",
-      QMD_RERANK_MODEL: "env-rerank",
     }, () => {
       const llm = new LlamaCpp({
         embedModel: "config-embed",
-        generateModel: "config-generate",
-        rerankModel: "config-rerank",
       });
       expect(llm.embedModelName).toBe(resolveEmbedModel({ embed: "config-embed" }));
-      expect(llm.generateModelName).toBe(resolveGenerateModel({ generate: "config-generate" }));
-      expect(llm.rerankModelName).toBe(resolveRerankModel({ rerank: "config-rerank" }));
     });
   });
 });
@@ -371,72 +351,8 @@ describe("LLM context parallelism safety", () => {
   });
 });
 
-describe("LlamaCpp expand context size config", () => {
-  const defaultExpandContextSize = 2048;
-
-  test("uses default expand context size when no config or env is set", () => {
-    const prev = process.env.QMD_EXPAND_CONTEXT_SIZE;
-    delete process.env.QMD_EXPAND_CONTEXT_SIZE;
-    try {
-      const llm = new LlamaCpp({}) as any;
-      expect(llm.expandContextSize).toBe(defaultExpandContextSize);
-    } finally {
-      if (prev === undefined) delete process.env.QMD_EXPAND_CONTEXT_SIZE;
-      else process.env.QMD_EXPAND_CONTEXT_SIZE = prev;
-    }
-  });
-
-  test("uses QMD_EXPAND_CONTEXT_SIZE when set to a positive integer", () => {
-    const prev = process.env.QMD_EXPAND_CONTEXT_SIZE;
-    process.env.QMD_EXPAND_CONTEXT_SIZE = "3072";
-    try {
-      const llm = new LlamaCpp({}) as any;
-      expect(llm.expandContextSize).toBe(3072);
-    } finally {
-      if (prev === undefined) delete process.env.QMD_EXPAND_CONTEXT_SIZE;
-      else process.env.QMD_EXPAND_CONTEXT_SIZE = prev;
-    }
-  });
-
-  test("config value overrides QMD_EXPAND_CONTEXT_SIZE", () => {
-    const prev = process.env.QMD_EXPAND_CONTEXT_SIZE;
-    process.env.QMD_EXPAND_CONTEXT_SIZE = "4096";
-    try {
-      const llm = new LlamaCpp({ expandContextSize: 1536 }) as any;
-      expect(llm.expandContextSize).toBe(1536);
-    } finally {
-      if (prev === undefined) delete process.env.QMD_EXPAND_CONTEXT_SIZE;
-      else process.env.QMD_EXPAND_CONTEXT_SIZE = prev;
-    }
-  });
-
-  test("falls back to default and warns when QMD_EXPAND_CONTEXT_SIZE is invalid", () => {
-    const prev = process.env.QMD_EXPAND_CONTEXT_SIZE;
-    process.env.QMD_EXPAND_CONTEXT_SIZE = "bad";
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      const llm = new LlamaCpp({}) as any;
-      expect(llm.expandContextSize).toBe(defaultExpandContextSize);
-      expect(stderrSpy).toHaveBeenCalled();
-      expect(String(stderrSpy.mock.calls[0]?.[0] || "")).toContain("QMD_EXPAND_CONTEXT_SIZE");
-    } finally {
-      stderrSpy.mockRestore();
-      if (prev === undefined) delete process.env.QMD_EXPAND_CONTEXT_SIZE;
-      else process.env.QMD_EXPAND_CONTEXT_SIZE = prev;
-    }
-  });
-
-  test("throws when config expandContextSize is invalid", () => {
-    expect(() => new LlamaCpp({ expandContextSize: 0 })).toThrow(
-      "Invalid expandContextSize: 0. Must be a positive integer."
-    );
-  });
-});
-
 describe("LlamaCpp model resolution (config > env > default)", () => {
   const HARDCODED_EMBED = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-  const HARDCODED_RERANK = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-  const HARDCODED_GENERATE = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
 
   test("uses hardcoded default when no config or env is set", () => {
     const prev = process.env.QMD_EMBED_MODEL;
@@ -444,8 +360,6 @@ describe("LlamaCpp model resolution (config > env > default)", () => {
     try {
       const llm = new LlamaCpp({}) as any;
       expect(llm.embedModelUri).toBe(HARDCODED_EMBED);
-      expect(llm.rerankModelUri).toBe(HARDCODED_RERANK);
-      expect(llm.generateModelUri).toBe(HARDCODED_GENERATE);
     } finally {
       if (prev === undefined) delete process.env.QMD_EMBED_MODEL;
       else process.env.QMD_EMBED_MODEL = prev;
@@ -500,38 +414,6 @@ describe("LlamaCpp embedding truncation", () => {
       embedding: [0.25, 0.5],
       model: llm.embedModelUri,
     });
-  });
-});
-
-describe("LlamaCpp rerank deduping", () => {
-  test("deduplicates identical document texts before scoring", async () => {
-    const llm = new LlamaCpp({}) as any;
-    llm._ciMode = false; // allow unit test even in CI (mocked, no real models)
-    const rankAll = vi.fn(async (_query: string, docs: string[]) =>
-      docs.map((doc) => doc === "shared chunk" ? 0.9 : 0.2)
-    );
-
-    llm.touchActivity = vi.fn();
-    llm.ensureRerankContexts = vi.fn().mockResolvedValue([{ rankAll }]);
-    llm.ensureRerankModel = vi.fn().mockResolvedValue({
-      tokenize: (text: string) => Array.from(text),
-      detokenize: (tokens: string[]) => tokens.join(""),
-    });
-
-    const result = await llm.rerank("query", [
-      { file: "a.md", text: "shared chunk" },
-      { file: "b.md", text: "shared chunk" },
-      { file: "c.md", text: "different chunk" },
-    ]);
-
-    expect(rankAll).toHaveBeenCalledTimes(1);
-    expect(rankAll).toHaveBeenCalledWith("query", ["shared chunk", "different chunk"]);
-    expect(result.results).toHaveLength(3);
-
-    const scoreByFile = new Map(result.results.map((item) => [item.file, item.score]));
-    expect(scoreByFile.get("a.md")).toBe(0.9);
-    expect(scoreByFile.get("b.md")).toBe(0.9);
-    expect(scoreByFile.get("c.md")).toBe(0.2);
   });
 });
 
@@ -741,227 +623,6 @@ describe.skipIf(!!process.env.CI)("LlamaCpp Integration", () => {
     }, 60000);
   });
 
-  describe("rerank", () => {
-    test("scores capital of France question correctly", async () => {
-      const query = "What is the capital of France?";
-      const documents: RerankDocument[] = [
-        { file: "butterflies.txt", text: "Butterflies indeed fly through the garden." },
-        { file: "france.txt", text: "The capital of France is Paris." },
-        { file: "canada.txt", text: "The capital of Canada is Ottawa." },
-      ];
-
-      const result = await llm.rerank(query, documents);
-
-      expect(result.results).toHaveLength(3);
-
-      // The France document should score highest
-      expect(result.results[0]!.file).toBe("france.txt");
-      expect(result.results[0]!.score).toBeGreaterThan(0.7);
-
-      // Canada should be somewhat relevant (also about capitals)
-      expect(result.results[1]!.file).toBe("canada.txt");
-
-      // Butterflies should score lowest
-      expect(result.results[2]!.file).toBe("butterflies.txt");
-      expect(result.results[2]!.score).toBeLessThan(0.6);
-    });
-
-    test("scores authentication query correctly", async () => {
-      const query = "How do I configure authentication?";
-      const documents: RerankDocument[] = [
-        { file: "weather.md", text: "The weather today is sunny with mild temperatures." },
-        { file: "auth.md", text: "Authentication can be configured by setting the AUTH_SECRET environment variable." },
-        { file: "pizza.md", text: "Our restaurant serves the best pizza in town." },
-        { file: "jwt.md", text: "JWT authentication requires a secret key and expiration time." },
-      ];
-
-      const result = await llm.rerank(query, documents);
-
-      expect(result.results).toHaveLength(4);
-
-      // Auth documents should score highest
-      const topTwo = result.results.slice(0, 2).map((r) => r.file);
-      expect(topTwo).toContain("auth.md");
-      expect(topTwo).toContain("jwt.md");
-
-      // Irrelevant documents should score lowest
-      const bottomTwo = result.results.slice(2).map((r) => r.file);
-      expect(bottomTwo).toContain("weather.md");
-      expect(bottomTwo).toContain("pizza.md");
-    });
-
-    test("handles programming queries correctly", async () => {
-      const query = "How do I handle errors in JavaScript?";
-      const documents: RerankDocument[] = [
-        { file: "cooking.md", text: "To make a good pasta, boil water and add salt." },
-        { file: "errors.md", text: "Use try-catch blocks to handle JavaScript errors gracefully." },
-        { file: "python.md", text: "Python uses try-except for exception handling." },
-      ];
-
-      const result = await llm.rerank(query, documents);
-
-      // JavaScript errors doc should score highest
-      expect(result.results[0]!.file).toBe("errors.md");
-      expect(result.results[0]!.score).toBeGreaterThan(0.7);
-
-      // Python doc might be somewhat relevant (same concept, different language)
-      // Cooking should be least relevant
-      expect(result.results[2]!.file).toBe("cooking.md");
-    });
-
-    test("handles empty document list", async () => {
-      const result = await llm.rerank("test query", []);
-      expect(result.results).toHaveLength(0);
-    });
-
-    test("handles single document", async () => {
-      const result = await llm.rerank("test", [{ file: "doc.md", text: "content" }]);
-      expect(result.results).toHaveLength(1);
-      expect(result.results[0]!.file).toBe("doc.md");
-    });
-
-    test("preserves original file paths", async () => {
-      const documents: RerankDocument[] = [
-        { file: "path/to/doc1.md", text: "content one" },
-        { file: "another/path/doc2.md", text: "content two" },
-      ];
-
-      const result = await llm.rerank("query", documents);
-
-      const files = result.results.map((r) => r.file).sort();
-      expect(files).toEqual(["another/path/doc2.md", "path/to/doc1.md"]);
-    });
-
-    test("returns scores between 0 and 1", async () => {
-      const documents: RerankDocument[] = [
-        { file: "a.md", text: "The quick brown fox jumps over the lazy dog." },
-        { file: "b.md", text: "Machine learning algorithms process data efficiently." },
-        { file: "c.md", text: "React components use JSX syntax for rendering." },
-      ];
-
-      const result = await llm.rerank("Tell me about animals", documents);
-
-      for (const doc of result.results) {
-        expect(doc.score).toBeGreaterThanOrEqual(0);
-        expect(doc.score).toBeLessThanOrEqual(1);
-      }
-    });
-
-    test("batch reranks multiple documents efficiently", async () => {
-      // Create 10 documents to verify batch processing works
-      const documents: RerankDocument[] = Array(10)
-        .fill(null)
-        .map((_, i) => ({
-          file: `doc${i}.md`,
-          text: `Document number ${i} with some content about topic ${i % 3}`,
-        }));
-
-      const start = Date.now();
-      const result = await llm.rerank("topic 1", documents);
-      const elapsed = Date.now() - start;
-
-      expect(result.results).toHaveLength(10);
-
-      // Verify all documents are returned with valid scores
-      for (const doc of result.results) {
-        expect(doc.score).toBeGreaterThanOrEqual(0);
-        expect(doc.score).toBeLessThanOrEqual(1);
-      }
-
-      // Log timing for monitoring batch performance
-      console.log(`Batch rerank of 10 docs took ${elapsed}ms`);
-    });
-
-    test("uses fewer active rerank contexts for small batches", async () => {
-      const freshLlm = new LlamaCpp({});
-      const calls: number[] = [];
-      const fakeModel = {
-        tokenize: (text: string) => Array.from(text),
-        detokenize: (tokens: string[]) => tokens.join(""),
-      };
-      const fakeContexts = Array.from({ length: 4 }, (_, idx) => ({
-        rankAll: async (_query: string, docs: string[]) => {
-          calls.push(idx);
-          return docs.map(() => 0.5);
-        },
-      }));
-
-      (freshLlm as any).ensureRerankModel = async () => fakeModel;
-      (freshLlm as any).ensureRerankContexts = async () => fakeContexts;
-
-      const documents: RerankDocument[] = Array.from({ length: 20 }, (_, i) => ({
-        file: `doc${i}.md`,
-        text: `Document number ${i}`,
-      }));
-
-      const result = await freshLlm.rerank("topic 1", documents);
-
-      expect(result.results).toHaveLength(20);
-      expect(calls).toEqual([0, 1]);
-    });
-
-    test("truncates and reranks document exceeding 2048 token context size", async () => {
-      // The reranker context is created with contextSize=2048. Documents that
-      // exceed the token budget (contextSize - template overhead - query tokens)
-      // should be silently truncated rather than crashing.
-      const paragraph = "The quick brown fox jumps over the lazy dog near the riverbank. " +
-        "Authentication tokens must be validated on every request to ensure security. " +
-        "Database queries should use prepared statements to prevent SQL injection attacks. " +
-        "The deployment pipeline includes linting, testing, building, and publishing stages. ";
-      // ~320 chars per paragraph, repeat 40 times = ~12800 chars ≈ 3200 tokens
-      const longText = paragraph.repeat(40);
-
-      const query = "How do I configure authentication?";
-      const documents: RerankDocument[] = [
-        { file: "short-relevant.md", text: "Authentication can be configured by setting AUTH_SECRET." },
-        { file: "long-doc.md", text: longText },
-        { file: "short-irrelevant.md", text: "The weather is sunny today." },
-      ];
-
-      console.log(`Long doc length: ${longText.length} chars (~${Math.round(longText.length / 4)} tokens)`);
-
-      const result = await llm.rerank(query, documents);
-
-      // Should return all 3 documents without crashing
-      expect(result.results).toHaveLength(3);
-
-      // All scores should be valid numbers in [0, 1]
-      for (const doc of result.results) {
-        expect(doc.score).toBeGreaterThanOrEqual(0);
-        expect(doc.score).toBeLessThanOrEqual(1);
-        expect(Number.isNaN(doc.score)).toBe(false);
-      }
-
-      // The short, directly relevant doc should still rank highest
-      console.log("Rerank results for long doc test:");
-      for (const doc of result.results) {
-        console.log(`  ${doc.file}: ${doc.score.toFixed(4)}`);
-      }
-    }, 30000);
-  });
-
-  describe("expandQuery", () => {
-    test("returns query expansions with correct types", async () => {
-      const result = await llm.expandQuery("test query");
-
-      // Result is Queryable[] containing lex, vec, and/or hyde entries
-      expect(result.length).toBeGreaterThanOrEqual(1);
-
-      // Each result should have a valid type
-      for (const q of result) {
-        expect(["lex", "vec", "hyde"]).toContain(q.type);
-        expect(q.text.length).toBeGreaterThan(0);
-      }
-    }, 30000); // 30s timeout for model loading
-
-    test("can exclude lexical queries", async () => {
-      const result = await llm.expandQuery("authentication setup", { includeLexical: false });
-
-      // Should not contain any 'lex' type entries
-      const lexEntries = result.filter(q => q.type === "lex");
-      expect(lexEntries).toHaveLength(0);
-    });
-  });
 });
 
 // =============================================================================
@@ -1039,21 +700,6 @@ describe.skipIf(!!process.env.CI)("LLM Session Management", () => {
           expect(result).not.toBeNull();
           expect(result!.embedding.length).toBe(768);
         }
-      });
-    });
-
-    test("session rerank works correctly", async () => {
-      await withLLMSession(async (session) => {
-        const documents: RerankDocument[] = [
-          { file: "a.txt", text: "The capital of France is Paris." },
-          { file: "b.txt", text: "Dogs are great pets." },
-        ];
-
-        const result = await session.rerank("What is the capital of France?", documents);
-
-        expect(result.results).toHaveLength(2);
-        expect(result.results[0]!.file).toBe("a.txt");
-        expect(result.results[0]!.score).toBeGreaterThan(result.results[1]!.score);
       });
     });
 

@@ -15,7 +15,7 @@ import { spawn } from "child_process";
 import { setTimeout as sleep } from "timers/promises";
 import { buildEditorUri, termLink, resolveEmbedModelForCli } from "../src/cli/qmd.ts";
 import { openDatabase } from "../src/db.ts";
-import { DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI } from "../src/llm.ts";
+import { DEFAULT_EMBED_MODEL_URI } from "../src/llm.ts";
 import { setConfigSource } from "../src/collections.ts";
 
 // Test fixtures directory and database path
@@ -527,8 +527,6 @@ describe("CLI Status Command", () => {
     const configText = readFileSync(join(testConfigDir, "index.yml"), "utf-8");
     expect(configText).toContain("models:");
     expect(configText).toContain(DEFAULT_EMBED_MODEL_URI);
-    expect(configText).toContain(DEFAULT_GENERATE_MODEL_URI);
-    expect(configText).toContain(DEFAULT_RERANK_MODEL_URI);
   }, 20000);
 
   test("qmd doctor warns when no collections are configured", async () => {
@@ -554,7 +552,7 @@ describe("CLI Status Command", () => {
 
   test("qmd doctor warns when configured models differ from code defaults", async () => {
     const env = await createIsolatedTestEnv("doctor-custom-models");
-    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: hf:example/custom-embed/custom.gguf\n  generate: ${DEFAULT_GENERATE_MODEL_URI}\n  rerank: ${DEFAULT_RERANK_MODEL_URI}\n`);
+    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: hf:example/custom-embed/custom.gguf\n`);
 
     const { stdout, exitCode } = await runQmd(["doctor"], { dbPath: env.dbPath, configDir: env.configDir });
     expect(exitCode).toBe(0);
@@ -668,8 +666,6 @@ describe("CLI Status Command", () => {
       QMD_FORCE_CPU: "1",
       QMD_LLAMA_GPU: "metal",
       QMD_EMBED_PARALLELISM: "2",
-      QMD_EXPAND_CONTEXT_SIZE: "4096",
-      QMD_RERANK_CONTEXT_SIZE: "8192",
       QMD_EMBED_CONTEXT_SIZE: "1024",
       QMD_EDITOR_URI: "vscode://file/{file}:{line}:{col}",
       QMD_SKILLS_DIR: "/tmp/qmd-skills",

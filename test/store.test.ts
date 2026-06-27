@@ -2993,101 +2993,6 @@ describe.skipIf(!!process.env.CI)("LlamaCpp Integration", () => {
 
     await cleanupTestDb(store);
   });
-
-  test("expandQuery returns typed expansions (no original query)", async () => {
-    const store = await createTestStore();
-
-    const expanded = await store.expandQuery("test query");
-    // Returns ExpandedQuery[] — typed results from LLM, excluding original
-    expect(expanded.length).toBeGreaterThanOrEqual(1);
-    for (const q of expanded) {
-      expect(['lex', 'vec', 'hyde']).toContain(q.type);
-      expect(q.query.length).toBeGreaterThan(0);
-      expect(q.query).not.toBe("test query"); // original excluded
-    }
-
-    await cleanupTestDb(store);
-  }, 90000);
-
-  test("expandQuery caches results as JSON with types", async () => {
-    const store = await createTestStore();
-
-    // First call — hits LLM
-    const queries1 = await store.expandQuery("cached query test");
-    // Second call — hits cache
-    const queries2 = await store.expandQuery("cached query test");
-
-    // Cache should preserve full typed structure
-    expect(queries1).toEqual(queries2);
-    expect(queries2[0]?.type).toBeDefined();
-
-    await cleanupTestDb(store);
-  }, 60000);
-
-  test("rerank scores documents", async () => {
-    const store = await createTestStore();
-
-    const docs = [
-      { file: "doc1.md", text: "Relevant content about the topic" },
-      { file: "doc2.md", text: "Other content" },
-    ];
-
-    const results = await store.rerank("topic", docs);
-    expect(results).toHaveLength(2);
-    // LlamaCpp reranker returns relevance scores
-    expect(results[0]!.score).toBeGreaterThan(0);
-
-    await cleanupTestDb(store);
-  });
-
-  test("rerank caches results", async () => {
-    const store = await createTestStore();
-
-    const docs = [{ file: "doc1.md", text: "Content for caching test" }];
-
-    // First call
-    await store.rerank("cache test query", docs);
-    // Second call - should hit cache
-    const results = await store.rerank("cache test query", docs);
-
-    expect(results).toHaveLength(1);
-
-    await cleanupTestDb(store);
-  });
-
-  test("rerank deduplicates identical chunks across files", async () => {
-    const store = await createTestStore();
-    const rerankSpy = vi.fn(async (_query: string, docs: { file: string; text: string }[]) => ({
-      results: docs.map((doc, index) => ({
-        file: doc.file,
-        score: 1 - index * 0.1,
-        index,
-      })),
-      model: "mock-reranker",
-    }));
-
-    const llmSpy = vi.spyOn(llmModule, "getDefaultLlamaCpp").mockReturnValue({
-      rerank: rerankSpy,
-    } as any);
-
-    try {
-      const docs = [
-        { file: "doc1.md", text: "Shared chunk text" },
-        { file: "doc2.md", text: "Shared chunk text" },
-      ];
-
-      const first = await store.rerank("shared", docs);
-      const second = await store.rerank("shared", docs);
-
-      expect(first).toHaveLength(2);
-      expect(second).toHaveLength(2);
-      expect(rerankSpy).toHaveBeenCalledTimes(1);
-      expect(rerankSpy.mock.calls[0]?.[1]).toEqual([{ file: "doc2.md", text: "Shared chunk text" }]);
-    } finally {
-      llmSpy.mockRestore();
-      await cleanupTestDb(store);
-    }
-  });
 });
 
 // =============================================================================
@@ -3488,7 +3393,6 @@ describe("Embedding batching", () => {
     store.db.exec(`CREATE TABLE vectors_vec (hash_seq TEXT PRIMARY KEY, embedding BLOB)`);
     store.llm = { embedModelName: model } as any;
     store.searchVec = searchVecSpy as any;
-    store.expandQuery = vi.fn(async () => []) as any;
 
     try {
       await vectorSearchQuery(store, "custom query", { limit: 7, minScore: 0 });
@@ -3518,7 +3422,6 @@ describe("Embedding batching", () => {
     } as any;
     store.searchVec = searchVecSpy as any;
     store.searchFTS = vi.fn(() => []) as any;
-    store.expandQuery = vi.fn(async () => []) as any;
 
     try {
       await hybridQuery(store, "hybrid query", { limit: 5, minScore: 0, skipRerank: true });

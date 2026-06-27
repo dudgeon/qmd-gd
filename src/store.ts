@@ -26,9 +26,6 @@ import {
   formatDocForEmbedding,
   withLLMSessionForLlm,
   DEFAULT_EMBED_MODEL_URI,
-  DEFAULT_RERANK_MODEL_URI,
-  DEFAULT_GENERATE_MODEL_URI,
-  type RerankDocument,
   type ILLMSession,
 } from "./llm.js";
 import type {
@@ -43,8 +40,6 @@ import type {
 // =============================================================================
 
 export const DEFAULT_EMBED_MODEL = DEFAULT_EMBED_MODEL_URI;
-export const DEFAULT_RERANK_MODEL = DEFAULT_RERANK_MODEL_URI;
-export const DEFAULT_QUERY_MODEL = DEFAULT_GENERATE_MODEL_URI;
 export const DEFAULT_GLOB = "**/*.md";
 export const DEFAULT_MULTI_GET_MAX_BYTES = 64 * 1024; // 64KB
 export const DEFAULT_EMBED_MAX_DOCS_PER_BATCH = 64;
@@ -334,8 +329,7 @@ export const STRONG_SIGNAL_MIN_GAP = 0.15;
 export const RERANK_CANDIDATE_LIMIT = 40;
 
 /**
- * A typed query expansion result. Decoupled from llm.ts internal Queryable —
- * same shape, but store.ts owns its own public API type.
+ * A typed query expansion result authored by the calling agent.
  *
  * - lex: keyword variant → routes to FTS only
  * - vec: semantic variant → routes to vector only
@@ -1311,10 +1305,6 @@ export type Store = {
   searchFTS: (query: string, limit?: number, collectionName?: string) => SearchResult[];
   searchVec: (query: string, model: string, limit?: number, collectionName?: string, session?: ILLMSession, precomputedEmbedding?: number[]) => Promise<SearchResult[]>;
 
-  // Query expansion & reranking
-  expandQuery: (query: string, model?: string, intent?: string) => Promise<ExpandedQuery[]>;
-  rerank: (query: string, documents: { file: string; text: string }[], model?: string, intent?: string) => Promise<{ file: string; score: number }[]>;
-
   // Document retrieval
   findDocument: (filename: string, options?: { includeBody?: boolean }) => DocumentResult | DocumentLookupError;
   getDocumentBody: (doc: DocumentResult | { filepath: string }, fromLine?: number, maxLines?: number) => string | null;
@@ -1992,10 +1982,6 @@ export function createStore(dbPath?: string): Store {
     // Search
     searchFTS: (query: string, limit?: number, collectionName?: string) => searchFTS(db, query, limit, collectionName),
     searchVec: (query: string, model: string, limit?: number, collectionName?: string, session?: ILLMSession, precomputedEmbedding?: number[]) => searchVec(db, query, model, limit, collectionName, session, precomputedEmbedding),
-
-    // Query expansion & reranking
-    expandQuery: (query: string, model?: string, intent?: string) => expandQuery(query, model ?? store.llm?.generateModelName ?? DEFAULT_QUERY_MODEL, db, intent, store.llm),
-    rerank: (query: string, documents: { file: string; text: string }[], model?: string, intent?: string) => rerank(query, documents, model ?? store.llm?.rerankModelName ?? DEFAULT_RERANK_MODEL, db, intent, store.llm),
 
     // Document retrieval
     findDocument: (filename: string, options?: { includeBody?: boolean }) => findDocument(db, filename, options),
@@ -3886,96 +3872,6 @@ function removeIncompleteEmbeddings(db: Database, expectedChunksByHash: Map<stri
 }
 
 // =============================================================================
-// Query expansion
-// =============================================================================
-
-export async function expandQuery(query: string, model: string = DEFAULT_QUERY_MODEL, db: Database, intent?: string, llmOverride?: LlamaCpp): Promise<ExpandedQuery[]> {
-  // Check cache first — stored as JSON preserving types
-  const cacheKey = getCacheKey("expandQuery", { query, model, ...(intent && { intent }) });
-  const cached = getCachedResult(db, cacheKey);
-  if (cached) {
-    try {
-      const parsed = JSON.parse(cached) as unknown;
-      if (!Array.isArray(parsed)) return [];
-      const rows = parsed as Array<Record<string, unknown>>;
-      // Migrate old cache format: { type, text } → { type, query }
-      if (rows.length > 0 && typeof rows[0]?.query === "string") {
-        return rows.map((r) => ({ type: r.type as ExpandedQuery["type"], query: String(r.query) }));
-      } else if (rows.length > 0 && typeof rows[0]?.text === "string") {
-        return rows.map((r) => ({ type: r.type as ExpandedQuery["type"], query: String(r.text) }));
-      }
-    } catch {
-      // Old cache format (pre-typed, newline-separated text) — re-expand
-    }
-  }
-
-  const llm = llmOverride ?? getDefaultLlamaCpp();
-  // Note: LlamaCpp uses hardcoded model, model parameter is ignored
-  const results = await llm.expandQuery(query, { intent });
-
-  // Map Queryable[] → ExpandedQuery[] (same shape, decoupled from llm.ts internals).
-  // Filter out entries that duplicate the original query text.
-  const expanded: ExpandedQuery[] = results
-    .filter(r => r.text !== query)
-    .map(r => ({ type: r.type, query: r.text }));
-
-  if (expanded.length > 0) {
-    setCachedResult(db, cacheKey, JSON.stringify(expanded));
-  }
-
-  return expanded;
-}
-
-// =============================================================================
-// Reranking
-// =============================================================================
-
-export async function rerank(query: string, documents: { file: string; text: string }[], model: string = DEFAULT_RERANK_MODEL, db: Database, intent?: string, llmOverride?: LlamaCpp): Promise<{ file: string; score: number }[]> {
-  // Prepend intent to rerank query so the reranker scores with domain context
-  const rerankQuery = intent ? `${intent}\n\n${query}` : query;
-
-  const cachedResults: Map<string, number> = new Map();
-  const uncachedDocsByChunk: Map<string, RerankDocument> = new Map();
-
-  // Check cache for each document
-  // Cache key includes chunk text — different queries can select different chunks
-  // from the same file, and the reranker score depends on which chunk was sent.
-  // File path is excluded from the new cache key because the reranker score
-  // depends on the chunk content, not where it came from.
-  for (const doc of documents) {
-    const cacheKey = getCacheKey("rerank", { query: rerankQuery, model, chunk: doc.text });
-    const legacyCacheKey = getCacheKey("rerank", { query, file: doc.file, model, chunk: doc.text });
-    const cached = getCachedResult(db, cacheKey) ?? getCachedResult(db, legacyCacheKey);
-    if (cached !== null) {
-      cachedResults.set(doc.text, parseFloat(cached));
-    } else {
-      uncachedDocsByChunk.set(doc.text, { file: doc.file, text: doc.text });
-    }
-  }
-
-  // Rerank uncached documents using LlamaCpp
-  if (uncachedDocsByChunk.size > 0) {
-    const llm = llmOverride ?? getDefaultLlamaCpp();
-    const uncachedDocs = [...uncachedDocsByChunk.values()];
-    const rerankResult = await llm.rerank(rerankQuery, uncachedDocs, { model });
-
-    // Cache results by chunk text so identical chunks across files are scored once.
-    const textByFile = new Map(uncachedDocs.map(d => [d.file, d.text]));
-    for (const result of rerankResult.results) {
-      const chunk = textByFile.get(result.file) || "";
-      const cacheKey = getCacheKey("rerank", { query: rerankQuery, model, chunk });
-      setCachedResult(db, cacheKey, result.score.toString());
-      cachedResults.set(chunk, result.score);
-    }
-  }
-
-  // Return all results sorted by score
-  return documents
-    .map(doc => ({ file: doc.file, score: cachedResults.get(doc.text) || 0 }))
-    .sort((a, b) => b.score - a.score);
-}
-
-// =============================================================================
 // Reciprocal Rank Fusion
 // =============================================================================
 
@@ -4739,7 +4635,6 @@ export async function hybridQuery(
   const collection = options?.collection;
   const explain = options?.explain ?? false;
   const intent = options?.intent;
-  const skipRerank = options?.skipRerank ?? true; // qmd-gd: rerank off by default — the agent reranks candidates (ADR 0002)
   const hooks = options?.hooks;
 
   const rankedLists: RankedResult[][] = [];
@@ -4885,125 +4780,47 @@ export async function hybridQuery(
     docChunkMap.set(cand.file, { chunks, bestIdx });
   }
 
-  if (skipRerank) {
-    // Skip LLM reranking — return candidates scored by RRF only
-    const seenFiles = new Set<string>();
-    return candidates
-      .map((cand, i) => {
-        const chunkInfo = docChunkMap.get(cand.file);
-        const bestIdx = chunkInfo?.bestIdx ?? 0;
-        const bestChunk = chunkInfo?.chunks[bestIdx]?.text || cand.body || "";
-        const bestChunkPos = chunkInfo?.chunks[bestIdx]?.pos || 0;
-        const rrfRank = i + 1;
-        const rrfScore = 1 / rrfRank;
-        const trace = rrfTraceByFile?.get(cand.file);
-        const explainData: HybridQueryExplain | undefined = explain ? {
-          ftsScores: trace?.contributions.filter(c => c.source === "fts").map(c => c.backendScore) ?? [],
-          vectorScores: trace?.contributions.filter(c => c.source === "vec").map(c => c.backendScore) ?? [],
-          rrf: {
-            rank: rrfRank,
-            positionScore: rrfScore,
-            weight: 1.0,
-            baseScore: trace?.baseScore ?? 0,
-            topRankBonus: trace?.topRankBonus ?? 0,
-            totalScore: trace?.totalScore ?? 0,
-            contributions: trace?.contributions ?? [],
-          },
-          rerankScore: 0,
-          blendedScore: rrfScore,
-        } : undefined;
-
-        return {
-          file: cand.file,
-          displayPath: cand.displayPath,
-          title: cand.title,
-          body: cand.body,
-          bestChunk,
-          bestChunkPos,
-          score: rrfScore,
-          context: store.getContextForFile(cand.file),
-          docid: docidMap.get(cand.file) || "",
-          ...(explainData ? { explain: explainData } : {}),
-        };
-      })
-      .filter(r => {
-        if (seenFiles.has(r.file)) return false;
-        seenFiles.add(r.file);
-        return true;
-      })
-      .filter(r => r.score >= minScore)
-      .slice(0, limit);
-  }
-
-  // Step 6: Rerank chunks (NOT full bodies)
-  const chunksToRerank: { file: string; text: string }[] = [];
-  for (const cand of candidates) {
-    const chunkInfo = docChunkMap.get(cand.file);
-    if (chunkInfo) {
-      chunksToRerank.push({ file: cand.file, text: chunkInfo.chunks[chunkInfo.bestIdx]!.text });
-    }
-  }
-
-  hooks?.onRerankStart?.(chunksToRerank.length);
-  const rerankStart = Date.now();
-  const reranked = await store.rerank(query, chunksToRerank, undefined, intent);
-  hooks?.onRerankDone?.(Date.now() - rerankStart);
-
-  // Step 7: Blend RRF position score with reranker score
-  // Position-aware weights: top retrieval results get more protection from reranker disagreement
-  const candidateMap = new Map(candidates.map(c => [c.file, {
-    displayPath: c.displayPath, title: c.title, body: c.body,
-  }]));
-  const rrfRankMap = new Map(candidates.map((c, i) => [c.file, i + 1]));
-
-  const blended = reranked.map(r => {
-    const rrfRank = rrfRankMap.get(r.file) || candidateLimit;
-    let rrfWeight: number;
-    if (rrfRank <= 3) rrfWeight = 0.75;
-    else if (rrfRank <= 10) rrfWeight = 0.60;
-    else rrfWeight = 0.40;
-    const rrfScore = 1 / rrfRank;
-    const blendedScore = rrfWeight * rrfScore + (1 - rrfWeight) * r.score;
-
-    const candidate = candidateMap.get(r.file);
-    const chunkInfo = docChunkMap.get(r.file);
-    const bestIdx = chunkInfo?.bestIdx ?? 0;
-    const bestChunk = chunkInfo?.chunks[bestIdx]?.text || candidate?.body || "";
-    const bestChunkPos = chunkInfo?.chunks[bestIdx]?.pos || 0;
-    const trace = rrfTraceByFile?.get(r.file);
-    const explainData: HybridQueryExplain | undefined = explain ? {
-      ftsScores: trace?.contributions.filter(c => c.source === "fts").map(c => c.backendScore) ?? [],
-      vectorScores: trace?.contributions.filter(c => c.source === "vec").map(c => c.backendScore) ?? [],
-      rrf: {
-        rank: rrfRank,
-        positionScore: rrfScore,
-        weight: rrfWeight,
-        baseScore: trace?.baseScore ?? 0,
-        topRankBonus: trace?.topRankBonus ?? 0,
-        totalScore: trace?.totalScore ?? 0,
-        contributions: trace?.contributions ?? [],
-      },
-      rerankScore: r.score,
-      blendedScore,
-    } : undefined;
-
-    return {
-      file: r.file,
-      displayPath: candidate?.displayPath || "",
-      title: candidate?.title || "",
-      body: candidate?.body || "",
-      bestChunk,
-      bestChunkPos,
-      score: blendedScore,
-      context: store.getContextForFile(r.file),
-      docid: docidMap.get(r.file) || "",
-      ...(explainData ? { explain: explainData } : {}),
-    };
-  }).sort((a, b) => b.score - a.score);
-
-  // Step 8: Dedup by file (safety net — prevents duplicate output)
+  // LLM reranking is delegated to the calling agent (ADR 0002); return
+  // candidates scored by RRF only.
   const seenFiles = new Set<string>();
-  return blended
+  return candidates
+    .map((cand, i) => {
+      const chunkInfo = docChunkMap.get(cand.file);
+      const bestIdx = chunkInfo?.bestIdx ?? 0;
+      const bestChunk = chunkInfo?.chunks[bestIdx]?.text || cand.body || "";
+      const bestChunkPos = chunkInfo?.chunks[bestIdx]?.pos || 0;
+      const rrfRank = i + 1;
+      const rrfScore = 1 / rrfRank;
+      const trace = rrfTraceByFile?.get(cand.file);
+      const explainData: HybridQueryExplain | undefined = explain ? {
+        ftsScores: trace?.contributions.filter(c => c.source === "fts").map(c => c.backendScore) ?? [],
+        vectorScores: trace?.contributions.filter(c => c.source === "vec").map(c => c.backendScore) ?? [],
+        rrf: {
+          rank: rrfRank,
+          positionScore: rrfScore,
+          weight: 1.0,
+          baseScore: trace?.baseScore ?? 0,
+          topRankBonus: trace?.topRankBonus ?? 0,
+          totalScore: trace?.totalScore ?? 0,
+          contributions: trace?.contributions ?? [],
+        },
+        rerankScore: 0,
+        blendedScore: rrfScore,
+      } : undefined;
+
+      return {
+        file: cand.file,
+        displayPath: cand.displayPath,
+        title: cand.title,
+        body: cand.body,
+        bestChunk,
+        bestChunkPos,
+        score: rrfScore,
+        context: store.getContextForFile(cand.file),
+        docid: docidMap.get(cand.file) || "",
+        ...(explainData ? { explain: explainData } : {}),
+      };
+    })
     .filter(r => {
       if (seenFiles.has(r.file)) return false;
       seenFiles.add(r.file);
@@ -5141,7 +4958,6 @@ export async function structuredSearch(
   const candidateLimit = options?.candidateLimit ?? RERANK_CANDIDATE_LIMIT;
   const explain = options?.explain ?? false;
   const intent = options?.intent;
-  const skipRerank = options?.skipRerank ?? true; // qmd-gd: rerank off by default — the agent reranks candidates (ADR 0002)
   const hooks = options?.hooks;
 
   const collections = options?.collections;
@@ -5281,124 +5097,47 @@ export async function structuredSearch(
     docChunkMap.set(cand.file, { chunks, bestIdx });
   }
 
-  if (skipRerank) {
-    // Skip LLM reranking — return candidates scored by RRF only
-    const seenFiles = new Set<string>();
-    return candidates
-      .map((cand, i) => {
-        const chunkInfo = docChunkMap.get(cand.file);
-        const bestIdx = chunkInfo?.bestIdx ?? 0;
-        const bestChunk = chunkInfo?.chunks[bestIdx]?.text || cand.body || "";
-        const bestChunkPos = chunkInfo?.chunks[bestIdx]?.pos || 0;
-        const rrfRank = i + 1;
-        const rrfScore = 1 / rrfRank;
-        const trace = rrfTraceByFile?.get(cand.file);
-        const explainData: HybridQueryExplain | undefined = explain ? {
-          ftsScores: trace?.contributions.filter(c => c.source === "fts").map(c => c.backendScore) ?? [],
-          vectorScores: trace?.contributions.filter(c => c.source === "vec").map(c => c.backendScore) ?? [],
-          rrf: {
-            rank: rrfRank,
-            positionScore: rrfScore,
-            weight: 1.0,
-            baseScore: trace?.baseScore ?? 0,
-            topRankBonus: trace?.topRankBonus ?? 0,
-            totalScore: trace?.totalScore ?? 0,
-            contributions: trace?.contributions ?? [],
-          },
-          rerankScore: 0,
-          blendedScore: rrfScore,
-        } : undefined;
-
-        return {
-          file: cand.file,
-          displayPath: cand.displayPath,
-          title: cand.title,
-          body: cand.body,
-          bestChunk,
-          bestChunkPos,
-          score: rrfScore,
-          context: store.getContextForFile(cand.file),
-          docid: docidMap.get(cand.file) || "",
-          ...(explainData ? { explain: explainData } : {}),
-        };
-      })
-      .filter(r => {
-        if (seenFiles.has(r.file)) return false;
-        seenFiles.add(r.file);
-        return true;
-      })
-      .filter(r => r.score >= minScore)
-      .slice(0, limit);
-  }
-
-  // Step 5: Rerank chunks
-  const chunksToRerank: { file: string; text: string }[] = [];
-  for (const cand of candidates) {
-    const chunkInfo = docChunkMap.get(cand.file);
-    if (chunkInfo) {
-      chunksToRerank.push({ file: cand.file, text: chunkInfo.chunks[chunkInfo.bestIdx]!.text });
-    }
-  }
-
-  hooks?.onRerankStart?.(chunksToRerank.length);
-  const rerankStart2 = Date.now();
-  const reranked = await store.rerank(primaryQuery, chunksToRerank, undefined, intent);
-  hooks?.onRerankDone?.(Date.now() - rerankStart2);
-
-  // Step 6: Blend RRF position score with reranker score
-  const candidateMap = new Map(candidates.map(c => [c.file, {
-    displayPath: c.displayPath, title: c.title, body: c.body,
-  }]));
-  const rrfRankMap = new Map(candidates.map((c, i) => [c.file, i + 1]));
-
-  const blended = reranked.map(r => {
-    const rrfRank = rrfRankMap.get(r.file) || candidateLimit;
-    let rrfWeight: number;
-    if (rrfRank <= 3) rrfWeight = 0.75;
-    else if (rrfRank <= 10) rrfWeight = 0.60;
-    else rrfWeight = 0.40;
-    const rrfScore = 1 / rrfRank;
-    const blendedScore = rrfWeight * rrfScore + (1 - rrfWeight) * r.score;
-
-    const candidate = candidateMap.get(r.file);
-    const chunkInfo = docChunkMap.get(r.file);
-    const bestIdx = chunkInfo?.bestIdx ?? 0;
-    const bestChunk = chunkInfo?.chunks[bestIdx]?.text || candidate?.body || "";
-    const bestChunkPos = chunkInfo?.chunks[bestIdx]?.pos || 0;
-    const trace = rrfTraceByFile?.get(r.file);
-    const explainData: HybridQueryExplain | undefined = explain ? {
-      ftsScores: trace?.contributions.filter(c => c.source === "fts").map(c => c.backendScore) ?? [],
-      vectorScores: trace?.contributions.filter(c => c.source === "vec").map(c => c.backendScore) ?? [],
-      rrf: {
-        rank: rrfRank,
-        positionScore: rrfScore,
-        weight: rrfWeight,
-        baseScore: trace?.baseScore ?? 0,
-        topRankBonus: trace?.topRankBonus ?? 0,
-        totalScore: trace?.totalScore ?? 0,
-        contributions: trace?.contributions ?? [],
-      },
-      rerankScore: r.score,
-      blendedScore,
-    } : undefined;
-
-    return {
-      file: r.file,
-      displayPath: candidate?.displayPath || "",
-      title: candidate?.title || "",
-      body: candidate?.body || "",
-      bestChunk,
-      bestChunkPos,
-      score: blendedScore,
-      context: store.getContextForFile(r.file),
-      docid: docidMap.get(r.file) || "",
-      ...(explainData ? { explain: explainData } : {}),
-    };
-  }).sort((a, b) => b.score - a.score);
-
-  // Step 7: Dedup by file
+  // LLM reranking is delegated to the calling agent (ADR 0002); return
+  // candidates scored by RRF only.
   const seenFiles = new Set<string>();
-  return blended
+  return candidates
+    .map((cand, i) => {
+      const chunkInfo = docChunkMap.get(cand.file);
+      const bestIdx = chunkInfo?.bestIdx ?? 0;
+      const bestChunk = chunkInfo?.chunks[bestIdx]?.text || cand.body || "";
+      const bestChunkPos = chunkInfo?.chunks[bestIdx]?.pos || 0;
+      const rrfRank = i + 1;
+      const rrfScore = 1 / rrfRank;
+      const trace = rrfTraceByFile?.get(cand.file);
+      const explainData: HybridQueryExplain | undefined = explain ? {
+        ftsScores: trace?.contributions.filter(c => c.source === "fts").map(c => c.backendScore) ?? [],
+        vectorScores: trace?.contributions.filter(c => c.source === "vec").map(c => c.backendScore) ?? [],
+        rrf: {
+          rank: rrfRank,
+          positionScore: rrfScore,
+          weight: 1.0,
+          baseScore: trace?.baseScore ?? 0,
+          topRankBonus: trace?.topRankBonus ?? 0,
+          totalScore: trace?.totalScore ?? 0,
+          contributions: trace?.contributions ?? [],
+        },
+        rerankScore: 0,
+        blendedScore: rrfScore,
+      } : undefined;
+
+      return {
+        file: cand.file,
+        displayPath: cand.displayPath,
+        title: cand.title,
+        body: cand.body,
+        bestChunk,
+        bestChunkPos,
+        score: rrfScore,
+        context: store.getContextForFile(cand.file),
+        docid: docidMap.get(cand.file) || "",
+        ...(explainData ? { explain: explainData } : {}),
+      };
+    })
     .filter(r => {
       if (seenFiles.has(r.file)) return false;
       seenFiles.add(r.file);

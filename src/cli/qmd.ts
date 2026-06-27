@@ -67,8 +67,6 @@ import {
   DEFAULT_EMBED_MODEL,
   DEFAULT_EMBED_MAX_BATCH_BYTES,
   DEFAULT_EMBED_MAX_DOCS_PER_BATCH,
-  DEFAULT_RERANK_MODEL,
-  DEFAULT_QUERY_MODEL,
   DEFAULT_GLOB,
   DEFAULT_MULTI_GET_MAX_BYTES,
   createStore,
@@ -80,7 +78,7 @@ import {
   type ReindexResult,
   type ChunkStrategy,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, inspectGgufFile, isDarwinMetalMitigationActive } from "../llm.js";
+import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, inspectGgufFile, isDarwinMetalMitigationActive } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -135,8 +133,6 @@ function getStore(): ReturnType<typeof createStore> {
       syncConfigToDb(store.db, config);
       setDefaultLlamaCpp(new LlamaCpp({
         embedModel: activeModels.embed,
-        generateModel: activeModels.generate,
-        rerankModel: activeModels.rerank,
       }));
     } catch {
       // Config may not exist yet — that's fine, DB works without it
@@ -417,7 +413,7 @@ function initLocalIndex(): void {
   if (!existsSync(configPath)) {
     saveConfig({
       collections: {},
-      models: resolveModels(),
+      models: { embed: resolveEmbedModel() },
     });
   } else {
     ensureModelsConfiguredForCli();
@@ -1805,25 +1801,26 @@ function parseEmbedTimeoutOption(value: unknown): number | undefined {
   return minutes * 60 * 1000;
 }
 
-function ensureModelsConfiguredForCli(): { embed: string; generate: string; rerank: string } {
+// qmd-gd only runs the local embedding model; generative query expansion and
+// reranking are delegated to the calling agent (ADR 0002), so model
+// resolution/persistence is embed-only.
+function ensureModelsConfiguredForCli(): { embed: string } {
   try {
     const config = loadConfig();
-    const models = resolveModels(config.models);
+    const embed = resolveEmbedModel(config.models);
     const current = config.models ?? {};
-    if (current.embed !== models.embed || current.generate !== models.generate || current.rerank !== models.rerank) {
+    if (current.embed !== embed) {
       saveConfig({
         ...config,
         models: {
           ...current,
-          embed: models.embed,
-          generate: models.generate,
-          rerank: models.rerank,
+          embed,
         },
       });
     }
-    return models;
+    return { embed };
   } catch {
-    return resolveModels();
+    return { embed: resolveEmbedModel() };
   }
 }
 
@@ -1831,15 +1828,7 @@ export function resolveEmbedModelForCli(): string {
   return ensureModelsConfiguredForCli().embed;
 }
 
-export function resolveGenerateModelForCli(): string {
-  return ensureModelsConfiguredForCli().generate;
-}
-
-export function resolveRerankModelForCli(): string {
-  return ensureModelsConfiguredForCli().rerank;
-}
-
-function resolveModelsForCli(): { embed: string; generate: string; rerank: string } {
+function resolveModelsForCli(): { embed: string } {
   return ensureModelsConfiguredForCli();
 }
 
@@ -2555,7 +2544,7 @@ async function vectorSearch(query: string, opts: OutputOptions, _model: string =
   }, { maxDuration: 10 * 60 * 1000, name: 'vectorSearch' });
 }
 
-async function querySearch(query: string, opts: OutputOptions, _embedModel: string = DEFAULT_EMBED_MODEL, _rerankModel: string = DEFAULT_RERANK_MODEL): Promise<void> {
+async function querySearch(query: string, opts: OutputOptions, _embedModel: string = DEFAULT_EMBED_MODEL): Promise<void> {
   const store = getStore();
 
   // Validate collection filter (supports multiple -c flags)
@@ -3440,14 +3429,14 @@ function envValueForDisplay(value: string): string {
   return sanitized.length > 96 ? `${sanitized.slice(0, 93)}...` : sanitized;
 }
 
-function collectEnvironmentOverrides(activeModels: { embed: string; generate: string; rerank: string }, configModels: ModelsConfig = {}): EnvOverride[] {
+function collectEnvironmentOverrides(activeModels: { embed: string }, configModels: ModelsConfig = {}): EnvOverride[] {
   const overrides: EnvOverride[] = [];
   const add = (name: string, consequence: string) => {
     const raw = process.env[name]?.trim();
     if (!raw) return;
     overrides.push({ name, value: envValueForDisplay(raw), consequence });
   };
-  const addModel = (name: string, key: "embed" | "generate" | "rerank", active: string) => {
+  const addModel = (name: string, key: "embed", active: string) => {
     const raw = process.env[name]?.trim();
     if (!raw) return;
     const configured = configModels[key];
@@ -3462,14 +3451,10 @@ function collectEnvironmentOverrides(activeModels: { embed: string; generate: st
   add("XDG_CONFIG_HOME", "moves QMD config to $XDG_CONFIG_HOME/qmd when QMD_CONFIG_DIR is not set");
   add("XDG_CACHE_HOME", "moves the default index cache and model cache");
   addModel("QMD_EMBED_MODEL", "embed", activeModels.embed);
-  addModel("QMD_GENERATE_MODEL", "generate", activeModels.generate);
-  addModel("QMD_RERANK_MODEL", "rerank", activeModels.rerank);
   add("QMD_FORCE_CPU", "forces llama.cpp to bypass GPU backends; embeddings/query will be slower but GPU crashes are avoided");
   add("QMD_LLAMA_GPU", "selects llama.cpp GPU backend (metal/cuda/vulkan) or disables GPU when set to false/off/0");
   add("QMD_DOCTOR_DEVICE_PROBE", "controls qmd doctor native device probing; 0/off skips GPU probing");
   add("QMD_EMBED_PARALLELISM", "overrides embedding parallel context count; too high can exhaust RAM/VRAM");
-  add("QMD_EXPAND_CONTEXT_SIZE", "overrides query expansion context size; larger values use more memory");
-  add("QMD_RERANK_CONTEXT_SIZE", "overrides reranker context size; larger values use more memory");
   add("QMD_EMBED_CONTEXT_SIZE", "overrides embed context size; larger values use more memory");
   add("QMD_EDITOR_URI", "overrides clickable editor link template in terminal output");
   add("QMD_SKILLS_DIR", "overrides where qmd skills are discovered from");
@@ -3509,7 +3494,7 @@ function checkDoctorIndexConfig(nextSteps: string[]): DoctorConfigCheck {
   }
 }
 
-function checkEnvironmentOverrides(activeModels: { embed: string; generate: string; rerank: string }, configModels: ModelsConfig = {}): void {
+function checkEnvironmentOverrides(activeModels: { embed: string }, configModels: ModelsConfig = {}): void {
   const overrides = collectEnvironmentOverrides(activeModels, configModels);
   if (overrides.length === 0) {
     doctorCheck("environment overrides", true, "none");
@@ -3522,7 +3507,7 @@ function checkEnvironmentOverrides(activeModels: { embed: string; generate: stri
   }
 }
 
-function checkModelDefaults(activeModels: { embed: string; generate: string; rerank: string }, configModels: ModelsConfig = {}): void {
+function checkModelDefaults(activeModels: { embed: string }, configModels: ModelsConfig = {}): void {
   // qmd-gd only runs the local embedding model; generation/reranking are delegated
   // to the calling agent (ADR 0002), so they are not checked here.
   const checks = [
@@ -3549,7 +3534,7 @@ function checkModelDefaults(activeModels: { embed: string; generate: string; rer
   doctorCheck("model defaults", false, `non-default model configuration: ${notes.join("; ")}`);
 }
 
-function checkModelCache(activeModels: { embed: string; generate: string; rerank: string }, nextSteps: string[]): void {
+function checkModelCache(activeModels: { embed: string }, nextSteps: string[]): void {
   const models = [
     ["embedding", activeModels.embed],
   ] as const;

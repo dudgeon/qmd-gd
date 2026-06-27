@@ -376,8 +376,6 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   // auto-unloads after 5 min inactivity to free VRAM.
   const llm = new LlamaCpp({
     embedModel: config?.models?.embed,
-    generateModel: config?.models?.generate,
-    rerankModel: config?.models?.rerank,
     inactivityTimeoutMs: 5 * 60 * 1000,
     disposeModelsOnInactivity: true,
   });
