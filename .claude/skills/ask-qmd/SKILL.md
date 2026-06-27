@@ -71,23 +71,26 @@ only inside Duo) — then after answering, **offer** (don't auto-open): *"Want m
 source and jump to the answer?"* When the user says yes:
 
 1. **Get the on-disk path.** Duo opens files, not `qmd://` URIs — re-run your step-2 search with
-   `--full-path` so each hit's `file` is an absolute path (the `line` is unchanged):
+   `--full-path` so each hit's `file` is an absolute path:
    ```bash
    qmd search "<the key terms>" --format json -n 8 --full-path     # (or the qmd query form)
    ```
-2. **Open it and scroll to the span:**
+2. **Open it, then jump to the answer by TEXT — not by qmd's line number.** Duo's editor
+   renders markdown and renumbers lines, so qmd's raw-file `line` does **not** match the
+   editor's line; passing it to `goto --line` lands in the wrong place. Locate the span by its
+   text and let `duo doc find` give you the editor-relative line:
    ```bash
-   duo open --reveal "<abs-path>"             # a .md source opens in Duo's editor
-   duo doc goto "<abs-path>" --line <line>     # scroll to the answer's line
+   duo open --reveal "<abs-path>"                                       # a .md source opens in the editor
+   duo doc find "<a distinctive phrase from the answer>" "<abs-path>"   # → {first:{line}} in EDITOR coords
+   duo doc goto "<abs-path>" --line <first.line>                        # scroll there
    ```
-   To land on the exact sentence instead of a line guess, find it first:
+   If the answer sits under a known section, this is even simpler (no phrase needed):
    ```bash
-   duo doc find "<a distinctive phrase from the answer>" "<abs-path>"   # → returns first.line
-   duo doc goto "<abs-path>" --line <first.line>
+   duo doc goto "<abs-path>" --heading "<Section heading>"
    ```
 3. **Optional emphasis:** `duo doc highlight "<abs-path>" --text "<the key sentence>"` marks the
-   exact span. Offer it; note it adds a **removable** highlight the user can clear. Skip it if
-   they just wanted to read.
+   span (match by the same distinctive text). Offer it; note it adds a **removable** highlight the
+   user can clear. Skip it if they just wanted to read.
 
 For multiple strong sources, offer to open each in turn.
 
