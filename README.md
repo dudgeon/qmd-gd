@@ -83,14 +83,27 @@ qmd get "docs/api-reference.md" --full
 
 qmd-gd has **no MCP server and no Claude Code plugin** — the CLI *is* the interface, and the
 skills are plain folders under `.claude/skills/`. Opening this repo in Claude Code auto-loads
-the `qmd` skill. To use it from your *other* projects too, symlink it into your user skills:
+the `qmd` and `ask-qmd` skills. To use them from your *other* projects too, symlink them into
+your user skills:
 
 ```bash
-qmd skill install --global   # live symlink: ~/.claude/skills/qmd -> this checkout
+qmd skill install --global   # live symlinks: ~/.claude/skills/{qmd,ask-qmd} -> this checkout
 ```
 
 (First time on a machine? Open this folder in Claude Code and say "help me get set up" — the
-`qmd-setup` skill sequences build/link → add collections → index → embed → schedule → verify.)
+`qmd-setup` skill sequences build/link → add collections → set the default ask scope → index →
+embed → verify.)
+
+Once set up, the quickest path is the **`/ask-qmd`** skill — ask a question, get a cited answer
+from your default-scoped knowledge base, no flags to remember:
+
+```
+/ask-qmd what were the takeaways from the last QBR meeting?
+```
+
+It authors the structured query, retrieves + reads the top sources, and answers with citations.
+The scope is whatever you marked default-included at setup (`qmd collection include/exclude`).
+Under the hood it runs the same loop the `qmd` skill teaches:
 
 The skill teaches the agent-driven loop: **author a structured query → retrieve →
 rank the candidates yourself.** qmd-gd does no query expansion or reranking with a

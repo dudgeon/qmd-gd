@@ -397,6 +397,12 @@ describe("CLI Skill Commands", () => {
     expect(readlinkSync(claudeLink)).toMatch(/\.claude\/skills\/qmd$/);
     expect(existsSync(join(fakeHome, ".agents"))).toBe(false);
     expect(stdout).toContain("Linked the qmd skill");
+    // The ask-qmd skill is installed alongside qmd (qmd-setup is intentionally not).
+    const askLink = join(fakeHome, ".claude", "skills", "ask-qmd");
+    expect(lstatSync(askLink).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(askLink)).toMatch(/\.claude\/skills\/ask-qmd$/);
+    expect(existsSync(join(fakeHome, ".claude", "skills", "qmd-setup"))).toBe(false);
+    expect(stdout).toContain("Linked the ask-qmd skill");
   });
 
   test("refuses to replace a non-symlink skill path without --force", async () => {

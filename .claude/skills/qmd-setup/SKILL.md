@@ -1,6 +1,6 @@
 ---
 name: qmd-setup
-description: Install and set up qmd-gd for a new user — build/link the CLI, install the qmd skill into ~/.claude/skills, add collections, index, embed, and schedule refresh. Use when the user says "/qmd-setup", "set up qmd", "install qmd", or asks how to get qmd search working. NOT auto-invoked by the model.
+description: Install and set up qmd-gd for a new user — build/link the CLI, install the qmd + ask-qmd skills, add collections, set the default /ask-qmd scope, index, embed, and schedule refresh. Use when the user says "/qmd-setup", "set up qmd", "install qmd", or asks how to get qmd search working. NOT auto-invoked by the model.
 disable-model-invocation: true
 ---
 
@@ -89,21 +89,20 @@ npm link           # exposes `qmd` globally (or: npm i -g .)
 After a Node major-version upgrade, re-run `npm rebuild` so the native modules match the
 new ABI.
 
-### 2. Make the qmd search skill available everywhere
+### 2. Make the qmd skills available everywhere
 
 qmd-gd ships its skills as plain folders under `.claude/skills/` in this checkout, so
 Claude Code **already auto-discovers them when you open this folder** (that is how this
-skill ran — no plugin, no install). To use the `qmd` *search* skill from your **other**
-projects too, symlink it into your user skills. `qmd skill install --global` does exactly
-that — a live symlink, so a later `git pull` keeps it current:
+skill ran — no plugin, no install). To use the **`qmd`** (search) and **`ask-qmd`**
+(ask-a-question) skills from your **other** projects too, symlink them into your user
+skills. `qmd skill install --global` does exactly that — live symlinks, so a later `git
+pull` keeps them current:
 
 ```bash
-qmd skill install --global        # symlinks ~/.claude/skills/qmd -> this checkout
-# equivalently, by hand:
-# ln -s "$PWD/.claude/skills/qmd" ~/.claude/skills/qmd
+qmd skill install --global        # symlinks ~/.claude/skills/{qmd,ask-qmd} -> this checkout
 ```
 
-Verify: `ls -l ~/.claude/skills/qmd` should show a symlink into this checkout.
+Verify: `ls -l ~/.claude/skills/` should show `qmd` and `ask-qmd` symlinks into this checkout.
 
 ### 3. Get the embedding model (test the dependency first)
 
@@ -148,7 +147,25 @@ qmd collection add ~/notes --name notes --mask '**/*.md'
 qmd collection add ~/work/handbook --name handbook --mask '**/*.md'
 ```
 
-### 5. Index and embed
+### 5. Choose the default `/ask-qmd` scope
+
+`/ask-qmd "<question>"` answers from qmd's **default-included** collections — the ones an
+*unscoped* `qmd query` searches. Decide which of the collections just added should be in that
+default scope, and exclude the rest. Ask the user which folders a question like *"what were
+the takeaways from the last QBR?"* should draw from, then print:
+
+```bash
+qmd collection include notes        # in the default /ask-qmd scope
+qmd collection include meetings
+qmd collection exclude scratch      # still searchable with -c, just not by default
+```
+
+Everything is included by default, so you only need `exclude` for collections that would add
+noise. There is no separate config file — the scope **is** qmd's include/exclude state, so the
+user can retune anytime. (`/ask-qmd … in my meeting notes` can still scope explicitly with
+`-c meetings`.)
+
+### 6. Index and embed
 
 ```bash
 qmd update     # scans files into the index (no inference)
@@ -158,7 +175,7 @@ qmd embed      # generates vector embeddings (local embedding model)
 `qmd embed` can take a while on large corpora and on first run downloads the
 model if step 3 was skipped. Let the user run it and wait.
 
-### 6. Verify
+### 7. Verify
 
 ```bash
 qmd doctor     # config, embedding-model cache, device/GPU, vector fingerprints
@@ -171,7 +188,11 @@ Then sanity-check search:
 qmd search "<a term you know is in the corpus>" -n 5
 ```
 
-### 7. Schedule automatic refresh (optional)
+And once the `ask-qmd` skill is linked (step 2), confirm the turnkey path from a Claude Code
+session: **`/ask-qmd <a question the corpus can answer>`** — it should return a cited answer,
+not just a list of files.
+
+### 8. Schedule automatic refresh (optional)
 
 Keep the index fresh without manual re-runs. **Preferred:** Duo's scheduler
 running a plain shell command (requires Duo's shell-job cron support):
