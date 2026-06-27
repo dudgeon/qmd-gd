@@ -31,15 +31,18 @@ through the `[todo]` items in order. Skip any step already `[ok]`.
 
 ### 1. Build & link the CLI (if `qmd` is not on PATH)
 
-From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a worktree):
+From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a worktree). qmd-gd runs on
+**Node (>=22)** — no Bun required:
 
 ```bash
-bun install
-bun run build      # compiles dist/ via tsc (do NOT use bun build --compile)
-bun link           # exposes `qmd` globally
+npm install        # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
+npm run build      # compiles dist/ via tsc (do NOT use `bun build --compile`)
+npm link           # exposes `qmd` globally (or: npm i -g .)
 ```
 
-(Node users: `npm install && npm run build && npm i -g .`)
+After a Node major-version upgrade, re-run `npm rebuild` so the native modules match the
+new ABI. (Bun also works if you have it — `bun install && bun run build && bun link` — but
+it is not required, and the CLI runs under Node by default.)
 
 ### 2. Install the qmd skill into Claude
 

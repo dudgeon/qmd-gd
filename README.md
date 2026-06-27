@@ -11,14 +11,10 @@ You can read more about qmd-gd's progress in the [CHANGELOG](CHANGELOG.md).
 ## Quick Start
 
 ```sh
-# Install globally (Node or Bun)
-npm install -g @tobilu/qmd
-# or
-bun install -g @tobilu/qmd
-
-# Or run directly
-npx @tobilu/qmd ...
-bunx @tobilu/qmd ...
+# qmd-gd is a private fork — install from the checkout. Runs on Node (>=22); no Bun needed.
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
+npm install && npm run build && npm link   # exposes `qmd` globally
+# (the `/qmd-setup` skill walks a non-technical user through this end to end)
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -488,19 +484,23 @@ Supported model families:
 
 ## Installation
 
+qmd-gd is a private fork installed from the checkout (not published to npm). It runs on
+**Node (>=22)** — Bun is optional, not required.
+
 ```sh
-npm install -g @tobilu/qmd
-# or
-bun install -g @tobilu/qmd
+git clone https://github.com/dudgeon/qmd-gd
+cd qmd-gd
+npm install      # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
+npm run build    # compiles dist/ via tsc
+npm link         # or: npm i -g .
 ```
+
+After a Node major-version upgrade, run `npm rebuild` so the native modules match the new ABI.
 
 ### Development
 
 ```sh
-git clone https://github.com/tobi/qmd
-cd qmd
-npm install
-npm link
+npx tsx src/cli/qmd.ts <command>   # run from source
 ```
 
 ## Usage

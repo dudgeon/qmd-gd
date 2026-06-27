@@ -1,6 +1,10 @@
-# QMD - Query Markup Documents
+# QMD - Query Markup Documents (qmd-gd fork)
 
-Use Bun instead of Node.js (`bun` not `node`, `bun install` not `npm install`).
+qmd-gd runs on **Node (>=22)** — no Bun required (`npm install`, `npm run build`,
+`npm link`). A committed `package-lock.json` makes the `qmd` launcher route to Node;
+Bun still works if present but is not the default and not needed. After a Node major
+upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec, node-llama-cpp)
+match the new ABI.
 
 ## Commands
 
@@ -132,8 +136,8 @@ qmd multi-get "#abc123, #def456"
 ## Development
 
 ```sh
-bun src/cli/qmd.ts <command>   # Run from source
-bun link               # Install globally as 'qmd'
+npx tsx src/cli/qmd.ts <command>   # Run from source (Node)
+npm link                           # Install globally as 'qmd'
 ```
 
 ## Tests
@@ -149,7 +153,7 @@ bun test --preload ./src/test-preload.ts test/
 
 - SQLite FTS5 for full-text search (BM25)
 - sqlite-vec for vector similarity search
-- node-llama-cpp for embeddings (embeddinggemma), reranking (qwen3-reranker), and query expansion (Qwen3)
+- node-llama-cpp for **embeddings only** (embeddinggemma). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
 - Reciprocal Rank Fusion (RRF) for combining results
 - Smart chunking: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries
 - AST-aware chunking: use `--chunk-strategy auto` to chunk code files (.ts/.js/.py/.go/.rs) at function/class/import boundaries via tree-sitter. Default is `regex` (existing behavior). Markdown and unknown file types always use regex chunking.
