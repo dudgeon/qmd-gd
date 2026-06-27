@@ -5,7 +5,7 @@
 # should run. It NEVER mutates anything (no collection add / update / embed /
 # install). The agent runs this to decide what to tell the user next.
 #
-# Usage: bash skills/qmd-setup/scripts/qmd-setup-context.sh
+# Usage: bash .claude/skills/qmd-setup/scripts/qmd-setup-context.sh
 set -uo pipefail
 
 section() { printf '\n=== %s ===\n' "$1"; }
@@ -43,17 +43,25 @@ else
   QMD_OK=0
 fi
 
-# --- Skill discovery (~/.claude/skills/qmd) ---------------------------------
+# --- Skill discovery --------------------------------------------------------
+# Skills live in this repo under .claude/skills/, so Claude Code auto-discovers
+# them whenever it is opened in this folder (no install needed). The check below
+# is only about making the qmd SEARCH skill available from OTHER folders too, via
+# a global symlink at ~/.claude/skills/qmd.
 section "Skill discovery"
+if [[ -n "$REPO_ROOT" && -f "$REPO_ROOT/.claude/skills/qmd/SKILL.md" ]]; then
+  ok "qmd + qmd-setup skills present in this checkout — auto-discovered when Claude Code opens here."
+fi
 CLAUDE_SKILL="$HOME/.claude/skills/qmd"
 if [[ -e "$CLAUDE_SKILL" || -L "$CLAUDE_SKILL" ]]; then
   if [[ -L "$CLAUDE_SKILL" ]]; then
-    ok "~/.claude/skills/qmd -> $(readlink "$CLAUDE_SKILL")"
+    ok "~/.claude/skills/qmd -> $(readlink "$CLAUDE_SKILL") (available in any folder)"
   else
     ok "~/.claude/skills/qmd present (directory)"
   fi
 else
-  todo "qmd skill not installed for Claude. Run: qmd skill install --global"
+  todo "qmd search skill not global yet (optional). To use it outside this folder:"
+  todo "    qmd skill install --global   # symlinks ~/.claude/skills/qmd -> this checkout"
 fi
 
 # --- Collections + index health (read-only) ---------------------------------
@@ -86,7 +94,7 @@ elif [[ -n "${QMD_EMBED_MODEL:-}" && -f "${QMD_EMBED_MODEL:-}" ]]; then
 else
   todo "Embedding model not present (~333MB) — downloads on first 'qmd embed' / 'qmd pull'."
   todo "Test the download dependency first (USER runs this; it makes network calls):"
-  todo "    bash skills/qmd-setup/scripts/preflight-deps.sh"
+  todo "    bash .claude/skills/qmd-setup/scripts/preflight-deps.sh"
 fi
 
 # --- Scheduled refresh (Duo) ------------------------------------------------

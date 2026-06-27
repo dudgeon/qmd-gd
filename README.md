@@ -4,17 +4,31 @@ An on-device search engine for everything you need to remember. Index your markd
 
 **qmd-gd** is a fork of [qmd](https://github.com/tobi/qmd) reworked for locked-down environments that forbid MCP servers and local generative-LLM inference. It combines BM25 full-text search and on-device vector semantic search (RRF fusion), running locally via a single **embedding** model. There is **no MCP server** and **no local generative model**: query expansion and reranking are delegated to the calling Claude agent, which authors `lex:/vec:/hyde:` queries and ranks the returned candidates itself. qmd-gd never invokes Claude and never runs `claude -p`. See [`docs/adr/`](docs/adr/) for the rationale.
 
-![QMD Architecture](assets/qmd-architecture.png)
-
 You can read more about qmd-gd's progress in the [CHANGELOG](CHANGELOG.md).
 
-## Quick Start
+## Get started (recommended for non-developers)
+
+qmd-gd is a **skills folder**, not a Claude Code plugin — there is nothing to install *into*
+Claude Code.
+
+1. On GitHub, click **Code → Download ZIP** and unzip it somewhere stable (e.g. `~/repos/qmd-gd`).
+2. Open a terminal in that folder and start Claude Code (`claude`).
+3. Say **"help me get set up"** (or run `/qmd-setup`). The bundled `qmd-setup` skill —
+   auto-discovered because you opened this folder — walks you through building the CLI, adding
+   folders to search, indexing, embedding, and (optionally) scheduling refresh. It prints each
+   command for *you* to run; it never installs or downloads anything itself.
+
+> Why it just works: the `qmd` and `qmd-setup` skills live under `.claude/skills/` in the repo,
+> which Claude Code auto-discovers when opened here. To use the `qmd` **search** skill from your
+> *other* projects too, run `qmd skill install --global` (a live symlink into `~/.claude/skills/qmd`).
+
+## Quick Start (developers)
 
 ```sh
-# qmd-gd is a private fork — install from the checkout. Runs on Node (>=22).
-git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
+# qmd-gd is a skills folder — clone OR download the repo ZIP from GitHub, then build.
+# Runs on Node (>=22). Non-developers: see "Get started" above and just say "help me get set up".
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd   # or: download the ZIP from GitHub and unzip
 npm install && npm run build && npm link   # exposes `qmd` globally
-# (the `/qmd-setup` skill walks a non-technical user through this end to end)
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -67,15 +81,16 @@ qmd get "docs/api-reference.md" --full
 
 ### Using with Claude Code / agents (no MCP)
 
-qmd-gd has **no MCP server** — the CLI *is* the interface. Your agent runs `qmd` over
-Bash. Install the bundled skill so Claude Code knows the workflow:
+qmd-gd has **no MCP server and no Claude Code plugin** — the CLI *is* the interface, and the
+skills are plain folders under `.claude/skills/`. Opening this repo in Claude Code auto-loads
+the `qmd` skill. To use it from your *other* projects too, symlink it into your user skills:
 
 ```bash
-qmd skill install --global   # copies the skill and symlinks ~/.claude/skills/qmd
+qmd skill install --global   # live symlink: ~/.claude/skills/qmd -> this checkout
 ```
 
-(First time on a machine? Run the `qmd-setup` skill, which sequences build/link →
-skill install → add collections → index → embed → schedule → verify.)
+(First time on a machine? Open this folder in Claude Code and say "help me get set up" — the
+`qmd-setup` skill sequences build/link → add collections → index → embed → schedule → verify.)
 
 The skill teaches the agent-driven loop: **author a structured query → retrieve →
 rank the candidates yourself.** qmd-gd does no query expansion or reranking with a

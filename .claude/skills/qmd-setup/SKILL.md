@@ -32,7 +32,7 @@ This probe touches **nothing on the network** (git, `command -v`, local SQLite r
 a cache-dir `ls`), so the agent may run it directly and read its `[todo]` items:
 
 ```bash
-bash skills/qmd-setup/scripts/qmd-setup-context.sh
+bash .claude/skills/qmd-setup/scripts/qmd-setup-context.sh
 ```
 
 It reports: checkout location (warns if you're in a throwaway `.claude/worktrees`
@@ -53,7 +53,7 @@ it.** Give the user this command to run in their own terminal and ask them to pa
 output:
 
 ```bash
-bash skills/qmd-setup/scripts/preflight-deps.sh   # USER runs this; exits non-zero if any service fails
+bash .claude/skills/qmd-setup/scripts/preflight-deps.sh   # USER runs this; exits non-zero if any service fails
 ```
 
 For each service it tests the **effective endpoint** — the user's configured internal value
@@ -89,16 +89,21 @@ npm link           # exposes `qmd` globally (or: npm i -g .)
 After a Node major-version upgrade, re-run `npm rebuild` so the native modules match the
 new ABI.
 
-### 2. Install the qmd skill into Claude
+### 2. Make the qmd search skill available everywhere
 
-This copies the skill and symlinks `~/.claude/skills/qmd` → the checkout, so
-Claude Code auto-discovers it:
+qmd-gd ships its skills as plain folders under `.claude/skills/` in this checkout, so
+Claude Code **already auto-discovers them when you open this folder** (that is how this
+skill ran — no plugin, no install). To use the `qmd` *search* skill from your **other**
+projects too, symlink it into your user skills. `qmd skill install --global` does exactly
+that — a live symlink, so a later `git pull` keeps it current:
 
 ```bash
-qmd skill install --global
+qmd skill install --global        # symlinks ~/.claude/skills/qmd -> this checkout
+# equivalently, by hand:
+# ln -s "$PWD/.claude/skills/qmd" ~/.claude/skills/qmd
 ```
 
-Verify: `ls -l ~/.claude/skills/qmd` should show a symlink into the checkout.
+Verify: `ls -l ~/.claude/skills/qmd` should show a symlink into this checkout.
 
 ### 3. Get the embedding model (test the dependency first)
 

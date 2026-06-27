@@ -11,6 +11,9 @@ texts/
 !README.md
 !CLAUDE.md
 !CHANGELOG.md
-!skills/**/*.md
 !docs/**/*.md
-.claude/
+# Project skills ship in-repo so Claude Code auto-discovers them when opened here.
+# Ignore everything else under .claude/ (worktrees, local settings, caches).
+.claude/*
+!.claude/skills/
+!.claude/skills/**

@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { chmod, copyFile, mkdtemp, rm, writeFile, mkdir } from "fs/promises";
-import { existsSync, lstatSync, readFileSync, symlinkSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -294,21 +294,21 @@ describe("CLI Skills", () => {
     expect(stdout).not.toContain("This file is a discovery stub");
   });
 
-  test("legacy skill install writes a qmd skill show bootstrap", async () => {
+  test("local skill install symlinks .claude/skills/qmd to the repo skill", async () => {
     const installDir = join(testDir, "skill-install-target");
     await mkdir(installDir, { recursive: true });
 
     const { stdout, stderr, exitCode } = await runQmd(["skill", "install", "--yes"], { cwd: installDir });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("Installed QMD skill");
+    expect(stdout).toContain("Linked the qmd skill");
 
-    const installedSkillDir = join(installDir, ".agents", "skills", "qmd");
-    const installed = readFileSync(join(installedSkillDir, "SKILL.md"), "utf8");
-    expect(installed).toContain("# QMD - Query Markdown Documents");
-    expect(installed).toContain("!`qmd skill show`");
-    expect(installed).toContain("qmd get");
-    expect(installed).not.toContain("## MCP Tool: `query`");
+    const link = join(installDir, ".claude", "skills", "qmd");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    // The symlink points at the repo's real qmd skill (a live link, not a copied stub).
+    expect(readlinkSync(link)).toMatch(/\.claude\/skills\/qmd$/);
+    // The old .agents/skills copy is gone — install is a pure symlink now.
+    expect(existsSync(join(installDir, ".agents"))).toBe(false);
   });
 });
 
@@ -371,23 +371,19 @@ describe("CLI Skill Commands", () => {
     expect(stdout).toContain("--global");
   });
 
-  test("installs the skill into the current project", async () => {
+  test("local install without --yes prints a manual symlink tip", async () => {
     const projectDir = join(testDir, "skill-project");
     await mkdir(projectDir, { recursive: true });
 
     const { stdout, exitCode } = await runQmd(["skill", "install"], { cwd: projectDir });
     expect(exitCode).toBe(0);
-
-    const skillDir = join(projectDir, ".agents", "skills", "qmd");
-    const installed = readFileSync(join(skillDir, "SKILL.md"), "utf-8");
-    expect(installed).toContain("# QMD - Query Markdown Documents");
-    expect(installed).toContain("!`qmd skill show`");
+    // Non-interactive + no --yes: we don't silently create a symlink, we tell the user how.
     expect(existsSync(join(projectDir, ".claude", "skills", "qmd"))).toBe(false);
-    expect(stdout).toContain(`✓ Installed QMD skill to ${skillDir}`);
-    expect(stdout).toContain("Tip: create a Claude symlink manually");
+    expect(existsSync(join(projectDir, ".agents"))).toBe(false);
+    expect(stdout).toContain("ln -s");
   });
 
-  test("installs globally and creates the Claude symlink with --yes", async () => {
+  test("global install symlinks ~/.claude/skills/qmd to the repo skill", async () => {
     const fakeHome = join(testDir, "skill-home");
     await mkdir(fakeHome, { recursive: true });
 
@@ -396,44 +392,25 @@ describe("CLI Skill Commands", () => {
     });
     expect(exitCode).toBe(0);
 
-    const skillDir = join(fakeHome, ".agents", "skills", "qmd");
     const claudeLink = join(fakeHome, ".claude", "skills", "qmd");
-
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("!`qmd skill show`");
     expect(lstatSync(claudeLink).isSymbolicLink()).toBe(true);
-    expect(readFileSync(join(claudeLink, "SKILL.md"), "utf-8")).toContain("!`qmd skill show`");
-    expect(stdout).toContain(`✓ Installed QMD skill to ${skillDir}`);
-    expect(stdout).toContain(`✓ Linked Claude skill at ${claudeLink}`);
+    expect(readlinkSync(claudeLink)).toMatch(/\.claude\/skills\/qmd$/);
+    expect(existsSync(join(fakeHome, ".agents"))).toBe(false);
+    expect(stdout).toContain("Linked the qmd skill");
   });
 
-  test("skips Claude qmd symlink when .claude/skills already points to .agents/skills", async () => {
-    const fakeHome = join(testDir, "skill-home-shared");
-    await mkdir(join(fakeHome, ".agents"), { recursive: true });
-    await mkdir(join(fakeHome, ".claude"), { recursive: true });
-    symlinkSync(join(fakeHome, ".agents", "skills"), join(fakeHome, ".claude", "skills"), "dir");
-
-    const { stdout, exitCode } = await runQmd(["skill", "install", "--global", "--yes"], {
-      env: { HOME: fakeHome },
-    });
-    expect(exitCode).toBe(0);
-
-    const skillDir = join(fakeHome, ".agents", "skills", "qmd");
-    expect(lstatSync(skillDir).isSymbolicLink()).toBe(false);
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("!`qmd skill show`");
-    expect(stdout).toContain(`✓ Claude already sees the skill via ${join(fakeHome, ".claude", "skills")}`);
-  });
-
-  test("refuses to overwrite an existing install without --force", async () => {
+  test("refuses to replace a non-symlink skill path without --force", async () => {
     const projectDir = join(testDir, "skill-project-force");
-    await mkdir(projectDir, { recursive: true });
+    await mkdir(join(projectDir, ".claude", "skills", "qmd"), { recursive: true });
 
-    const first = await runQmd(["skill", "install"], { cwd: projectDir });
-    expect(first.exitCode).toBe(0);
+    const blocked = await runQmd(["skill", "install", "--yes"], { cwd: projectDir });
+    expect(blocked.exitCode).toBe(1);
+    expect(blocked.stderr).toContain("already exists");
+    expect(blocked.stderr).toContain("--force");
 
-    const second = await runQmd(["skill", "install"], { cwd: projectDir });
-    expect(second.exitCode).toBe(1);
-    expect(second.stderr).toContain("Skill already exists");
-    expect(second.stderr).toContain("--force");
+    const forced = await runQmd(["skill", "install", "--yes", "--force"], { cwd: projectDir });
+    expect(forced.exitCode).toBe(0);
+    expect(lstatSync(join(projectDir, ".claude", "skills", "qmd")).isSymbolicLink()).toBe(true);
   });
 });
 

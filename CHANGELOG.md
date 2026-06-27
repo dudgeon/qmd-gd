@@ -35,10 +35,21 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   agent). The network preflight (`preflight-deps.sh`, which `curl`s npm/HuggingFace) is
   now explicitly **user-run** — the agent hands it over and reads back the pasted output.
   The local read-only probe (`qmd-setup-context.sh`) stays agent-runnable (no network).
+- **Unbundled the Claude Code plugin → plain skills folder.** Removed
+  `.claude-plugin/marketplace.json` and moved the skills from `skills/` to **`.claude/skills/`**
+  (`qmd`, `qmd-setup`). Claude Code now **auto-discovers them when this folder is opened** — no
+  plugin install — which matters where third-party plugins are disallowed. `qmd skill install
+  --global` now makes a **live symlink** `~/.claude/skills/qmd -> <checkout>` (was a copied
+  bootstrap stub under `.agents/skills/`), so `git pull` keeps the global skill current. Added a
+  CLAUDE.md "Getting set up" route so "help me get set up" / `/qmd-setup` works on a fresh
+  download, and a friendly README "Get started" (download ZIP → open Claude Code → ask).
 - Added `docs/adr/` recording the four architecture decisions.
 
 ### Removed
 
+- **Claude Code plugin packaging.** `.claude-plugin/marketplace.json` and the
+  `.agents/skills` copy + bootstrap-stub install path are gone — qmd-gd is a plain skills
+  folder now (see Changes). Also dropped the now-dead architecture image reference from the README.
 - **Bun support.** qmd-gd is Node-only (>=22); the Bun runtime path, lockfile, and
   launcher detection are gone.
 - **AST/tree-sitter code chunking.** The `--chunk-strategy auto` flag and the

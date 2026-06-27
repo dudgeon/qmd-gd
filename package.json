@@ -18,7 +18,7 @@
   "files": [
     "bin/",
     "dist/",
-    "skills/",
+    ".claude/skills/",
     "scripts/build.mjs",
     "scripts/test-all.mjs",
     "docs/adr/",

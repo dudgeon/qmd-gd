@@ -2775,12 +2775,6 @@ function parseCLI() {
   };
 }
 
-function getSkillInstallDir(globalInstall: boolean): string {
-  return globalInstall
-    ? resolve(homedir(), ".agents", "skills", "qmd")
-    : resolve(getPwd(), ".agents", "skills", "qmd");
-}
-
 function getClaudeSkillLinkPath(globalInstall: boolean): string {
   return globalInstall
     ? resolve(homedir(), ".claude", "skills", "qmd")
@@ -2812,17 +2806,21 @@ type SkillInfo = {
   hidden: boolean;
 };
 
-const SKILL_DIR = "skills";
+// Skills live under .claude/skills/ so Claude Code auto-discovers them when a
+// user opens this folder. (Top-level skills/ is NOT auto-discovered.)
+const SKILL_DIR = ".claude/skills";
 
 function findPackageRoot(): string | null {
   if (process.env.QMD_SKILLS_DIR) {
     return null;
   }
 
+  // Anchor on package.json — NOT on .claude/skills — so we never accidentally
+  // resolve a parent like ~/.claude/skills when qmd is installed under $HOME.
   const start = dirname(fileURLToPath(import.meta.url));
   let current = start;
   while (true) {
-    if (existsSync(resolve(current, SKILL_DIR))) {
+    if (existsSync(resolve(current, "package.json"))) {
       return current;
     }
     const parent = dirname(current);
@@ -2942,66 +2940,6 @@ function showSkill(): void {
   process.stdout.write(content.endsWith("\n") ? content : content + "\n");
 }
 
-function copyDirectoryContents(sourceDir: string, targetDir: string): void {
-  mkdirSync(targetDir, { recursive: true });
-  for (const entry of readdirSync(sourceDir)) {
-    const sourcePath = resolve(sourceDir, entry);
-    const targetPath = resolve(targetDir, entry);
-    const stat = statSync(sourcePath);
-    if (stat.isDirectory()) {
-      copyDirectoryContents(sourcePath, targetPath);
-    } else if (stat.isFile()) {
-      copyFileSync(sourcePath, targetPath);
-    }
-  }
-}
-
-function installedSkillStubContent(): string {
-  return `---
-name: qmd
-description: Bootstrap QMD search instructions from the installed qmd CLI. Use when users ask to find notes, retrieve documents, inspect a wiki, or answer from indexed local markdown.
-license: MIT
-compatibility: Requires qmd CLI. Run \`qmd skill show\` for version-matched instructions.
-allowed-tools: Bash(qmd:*)
----
-
-# QMD - Query Markdown Documents
-
-This installed skill is intentionally a small bootstrap so it does not go stale
-when the qmd package updates.
-
-Load the full, version-matched QMD instructions from the CLI:
-
-!\`qmd skill show\`
-
-If your agent does not support bang-command expansion, run:
-
-\`\`\`bash
-qmd skill show
-\`\`\`
-
-Then follow those instructions. In short: search first, fetch full sources with
-\`qmd get\` or \`qmd multi-get\`, and answer from retrieved text rather than snippets.
-`;
-}
-
-function writeSkillInstall(targetDir: string, force: boolean): void {
-  if (pathExists(targetDir)) {
-    if (!force) {
-      throw new Error(`Skill already exists: ${targetDir} (use --force to replace it)`);
-    }
-    removePath(targetDir);
-  }
-
-  const skill = findSkill("qmd");
-  if (!skill) {
-    throw new Error("QMD skill not found. Reinstall qmd or set QMD_SKILLS_DIR.");
-  }
-
-  copyDirectoryContents(skill.dir, targetDir);
-  writeFileSync(resolve(targetDir, "SKILL.md"), installedSkillStubContent(), "utf-8");
-}
-
 function outputSkillsJson(payload: unknown): void {
   console.log(JSON.stringify(payload));
 }
@@ -3117,8 +3055,9 @@ function ensureClaudeSymlink(linkPath: string, targetDir: string, force: boolean
     const resolvedTargetDir = realpathSync(dirname(targetDir));
     const resolvedLinkParent = realpathSync(parentDir);
 
-    // If .claude/skills already resolves to the same directory as .agents/skills,
-    // the skill is already visible to Claude and creating qmd -> qmd would loop.
+    // If the link's parent is the same directory that already holds the skill
+    // (e.g. linking into the very .claude/skills the source lives in), the skill
+    // is already discoverable and creating qmd -> qmd would loop.
     if (resolvedTargetDir === resolvedLinkParent) {
       return false;
     }
@@ -3167,20 +3106,33 @@ async function shouldCreateClaudeSymlink(linkPath: string, autoYes: boolean): Pr
 }
 
 async function installSkill(globalInstall: boolean, force: boolean, autoYes: boolean): Promise<void> {
-  const installDir = getSkillInstallDir(globalInstall);
-  writeSkillInstall(installDir, force);
-  console.log(`✓ Installed QMD skill to ${installDir}`);
+  const skill = findSkill("qmd");
+  if (!skill) {
+    throw new Error("QMD skill source not found. Run `qmd skill install` from the qmd-gd checkout, or set QMD_SKILLS_DIR.");
+  }
+  const sourceDir = skill.dir; // <repo>/.claude/skills/qmd
 
-  const claudeLinkPath = getClaudeSkillLinkPath(globalInstall);
-  if (!(await shouldCreateClaudeSymlink(claudeLinkPath, autoYes))) {
+  // "Installing" the skill globally is just a symlink from ~/.claude/skills/qmd
+  // to the skill folder in this checkout, so `git pull` keeps it current. No copy.
+  const linkPath = getClaudeSkillLinkPath(globalInstall);
+
+  // Local install from the checkout: the skill already lives at ./.claude/skills/qmd,
+  // so Claude Code already auto-discovers it here — nothing to do.
+  if (resolve(linkPath) === resolve(sourceDir)) {
+    console.log(`✓ The qmd skill already lives at ${linkPath}; Claude Code auto-discovers it here. Nothing to install.`);
     return;
   }
 
-  const linked = ensureClaudeSymlink(claudeLinkPath, installDir, force);
+  if (!(await shouldCreateClaudeSymlink(linkPath, autoYes))) {
+    console.log(`  To link it by hand: ln -s "${sourceDir}" "${linkPath}"`);
+    return;
+  }
+
+  const linked = ensureClaudeSymlink(linkPath, sourceDir, force);
   if (linked) {
-    console.log(`✓ Linked Claude skill at ${claudeLinkPath}`);
+    console.log(`✓ Linked the qmd skill: ${linkPath} -> ${sourceDir}`);
   } else {
-    console.log(`✓ Claude already sees the skill via ${dirname(claudeLinkPath)}`);
+    console.log(`✓ Claude already sees the qmd skill at ${dirname(linkPath)}`);
   }
 }
 
@@ -3252,8 +3204,8 @@ function showHelp(): void {
   console.log("");
   console.log("AI agents & integrations:");
   console.log("  - Run `qmd skills get qmd --full` for version-matched agent instructions.");
-  console.log("  - `qmd skill install` installs the QMD skill into ./.agents/skills/qmd.");
-  console.log("  - Use `qmd skill install --global` for ~/.agents/skills/qmd (symlinks into ~/.claude/skills/qmd).");
+  console.log("  - `qmd skill install --global` symlinks the skill into ~/.claude/skills/qmd (available everywhere).");
+  console.log("  - Or just open Claude Code in this checkout — skills under .claude/skills/ auto-load, no install.");
   console.log("  - `qmd --skill` is kept as an alias for `qmd skill show`.");
   console.log("");
   console.log("Global options:");
@@ -3925,12 +3877,12 @@ if (isMain) {
     console.log("");
     console.log("Commands:");
     console.log("  show                 Print the QMD skill");
-    console.log("  install              Install QMD skill into ./.agents/skills/qmd");
+    console.log("  install              Symlink the qmd skill into ./.claude/skills/qmd");
     console.log("");
     console.log("Options:");
-    console.log("  --global             Install into ~/.agents/skills/qmd");
-    console.log("  --yes                Also create the .claude/skills/qmd symlink");
-    console.log("  -f, --force          Replace existing install or symlink");
+    console.log("  --global             Symlink into ~/.claude/skills/qmd (available everywhere)");
+    console.log("  --yes                Create the symlink without prompting");
+    console.log("  -f, --force          Replace an existing skill path");
     process.exit(0);
   }
 
@@ -4343,12 +4295,12 @@ if (isMain) {
           console.log("");
           console.log("Commands:");
           console.log("  show                 Print the QMD skill");
-          console.log("  install              Install QMD skill into ./.agents/skills/qmd");
+          console.log("  install              Symlink the qmd skill into ./.claude/skills/qmd");
           console.log("");
           console.log("Options:");
-          console.log("  --global             Install into ~/.agents/skills/qmd");
-          console.log("  --yes                Also create the .claude/skills/qmd symlink");
-          console.log("  -f, --force          Replace existing install or symlink");
+          console.log("  --global             Symlink into ~/.claude/skills/qmd (available everywhere)");
+          console.log("  --yes                Create the symlink without prompting");
+          console.log("  -f, --force          Replace an existing skill path");
           process.exit(0);
         }
 

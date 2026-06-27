@@ -37,7 +37,7 @@ describe("package test task", () => {
 
 describe("published package files", () => {
   test("ships bin, dist, skills, and the build/test scripts", () => {
-    for (const entry of ["bin/", "dist/", "skills/", "scripts/build.mjs", "scripts/test-all.mjs"]) {
+    for (const entry of ["bin/", "dist/", ".claude/skills/", "scripts/build.mjs", "scripts/test-all.mjs"]) {
       expect(pkg.files, `published package files should include ${entry}`).toContain(entry);
     }
     // Grammar/smoke helpers were removed with the AST/Bun teardown.
@@ -46,7 +46,7 @@ describe("published package files", () => {
   });
 
   test("publishes the qmd skill with the expected structure", () => {
-    const qmdSkill = readFileSync(new URL("skills/qmd/SKILL.md", root), "utf8");
+    const qmdSkill = readFileSync(new URL(".claude/skills/qmd/SKILL.md", root), "utf8");
     expect(qmdSkill).toContain("# QMD - Query Markdown Documents");
     expect(qmdSkill).toContain("## How search works");
     expect(qmdSkill).toContain("## Rank the candidates yourself");

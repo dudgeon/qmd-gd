@@ -4,6 +4,24 @@ qmd-gd runs on **Node (>=22)** (`npm install`, `npm run build`, `npm link`). Aft
 Node major upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec,
 node-llama-cpp) match the new ABI.
 
+qmd-gd ships its skills as plain folders under `.claude/skills/` (no Claude Code plugin).
+When this folder is opened in Claude Code, the `qmd` and `qmd-setup` skills auto-load.
+
+## Getting set up
+
+When the user asks to **get set up / install qmd / "/setup" / "help me get started"**, read
+and follow [`.claude/skills/qmd-setup/SKILL.md`](.claude/skills/qmd-setup/SKILL.md) step by
+step. Two hard rules from that skill that you MUST honor:
+
+- **Never run state-mutating commands for the user** (`npm install`, `qmd skill install`,
+  `qmd collection add`, `qmd update`, `qmd embed`, `qmd pull`). Print them for the user to run.
+- **Never contact an external network domain.** Only `capitalone.com` / `github.com` are
+  reachable by you; the user runs anything that hits the npm registry, HuggingFace, or
+  prebuilt hosts (including the preflight script) from their own terminal.
+
+The only setup helper you may run yourself is the local, network-free probe
+`.claude/skills/qmd-setup/scripts/qmd-setup-context.sh`.
+
 ## Commands
 
 ```sh
