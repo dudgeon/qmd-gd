@@ -66,6 +66,27 @@ export const CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * 4;  // 288 chars
 export const CHUNK_WINDOW_TOKENS = 200;
 export const CHUNK_WINDOW_CHARS = CHUNK_WINDOW_TOKENS * 4;  // 800 chars
 
+/**
+ * Self-heal detector: returns the name of a *different* embedding model already
+ * present in the index, or null if the index is empty/fresh or every vector was
+ * built with `currentModel`. A non-null result means the stored vectors have a
+ * different dimension/fingerprint than `currentModel` produces, so `qmd embed`
+ * must drop them and re-embed rather than erroring on a dimension mismatch.
+ *
+ * Catches and treats a missing `content_vectors` table as "nothing to migrate"
+ * (a brand-new index), so callers don't need their own try/catch.
+ */
+export function findStaleVectorModel(db: Database, currentModel: string): string | null {
+  try {
+    const row = db
+      .prepare(`SELECT model FROM content_vectors WHERE model IS NOT NULL AND model != ? LIMIT 1`)
+      .get(currentModel) as { model: string } | undefined;
+    return row?.model ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function getEmbeddingFingerprint(model: string = DEFAULT_EMBED_MODEL): string {
   const significant = [
     `model:${model}`,

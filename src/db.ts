@@ -15,6 +15,24 @@
 export type SQLiteValue = string | number | bigint | Buffer | Uint8Array | Float32Array | null;
 export type SQLiteParams = readonly SQLiteValue[];
 
+// Suppress ONLY the informational node:sqlite ExperimentalWarning, at its source.
+// Node emits it through process.emitWarning when the module loads. bin/qmd passes
+// --disable-warning, but direct `node`/`tsx` entry points (the test harness, the
+// store worker) bypass that launcher and would otherwise leak it to stderr. Filtering
+// here covers every entry path and forwards all other warnings untouched.
+{
+  const original = process.emitWarning.bind(process);
+  const filtered = (warning: unknown, ...rest: unknown[]): void => {
+    const opt = rest[0];
+    const type = typeof opt === "string" ? opt : (opt as { type?: string } | undefined)?.type;
+    const name = warning instanceof Error ? warning.name : type;
+    const message = warning instanceof Error ? warning.message : String(warning ?? "");
+    if (name === "ExperimentalWarning" && /\bSQLite\b/i.test(message)) return;
+    (original as (...a: unknown[]) => void)(warning, ...rest);
+  };
+  process.emitWarning = filtered as typeof process.emitWarning;
+}
+
 // Load node:sqlite lazily so an unsupported Node yields a clear, actionable error
 // instead of a cryptic "Cannot find module 'node:sqlite'".
 const nodeSqlite = await (async () => {
@@ -143,13 +161,18 @@ class NodeSqliteDatabase implements Database {
       this.txDepth++;
       try {
         const out = fn(...args);
-        this.txDepth--;
+        // RELEASE/COMMIT can itself throw (e.g. a deferred-constraint or busy
+        // failure on commit); let that fall to the catch so we still ROLLBACK.
         this.raw.exec(nested ? `RELEASE ${sp}` : "COMMIT");
         return out;
       } catch (err) {
-        this.txDepth--;
         this.raw.exec(nested ? `ROLLBACK TO ${sp}` : "ROLLBACK");
         throw err;
+      } finally {
+        // Decrement exactly once on every exit path. Doing this in `finally`
+        // (not before COMMIT) keeps txDepth correct even when COMMIT throws and
+        // control passes through catch — otherwise it would decrement twice.
+        this.txDepth--;
       }
     }) as T;
     return wrapped;

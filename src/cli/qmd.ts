@@ -75,9 +75,10 @@ import {
   generateEmbeddings,
   maybeAdoptLegacyEmbeddingFingerprint,
   syncConfigToDb,
+  findStaleVectorModel,
   type ReindexResult,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveBundledModelPath, inspectGgufFile, isDarwinMetalMitigationActive, DEFAULT_EMBED_MODEL_URI } from "../llm.js";
+import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveBundledModelPath, inspectGgufFile, isDarwinMetalMitigationActive, DEFAULT_EMBED_MODEL_URI, isLegacyDefaultEmbedModel } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -1867,6 +1868,16 @@ function configCommand(args: string[]): void {
       if (!value) throw new Error("Usage: qmd config set models.embed <value>");
       saveConfig({ ...config, models: { ...(config.models ?? {}), embed: value } });
       console.log(`${c.green}✓${c.reset} models.embed = ${value}`);
+      if (isLegacyDefaultEmbedModel(value)) {
+        // Persisted, but resolveEmbedModel treats a legacy default as "use the
+        // current default" and ignores it — say so rather than letting the user
+        // think they pinned a model that will silently not take effect.
+        console.log(
+          `${c.yellow}Note:${c.reset} ${shortModelName(value)} was a prior built-in default, so qmd treats it as ` +
+            `"use the current default" (${shortModelName(DEFAULT_EMBED_MODEL_URI)}) and will not pin it. ` +
+            `Set a different model, or 'qmd config unset models.embed' for the bundled default.`,
+        );
+      }
       console.log("Run 'qmd embed -f' to re-embed with the new model (it auto-recovers on a model change).");
       return;
     }
@@ -1898,20 +1909,14 @@ async function vectorIndex(
   // (dropping the stale shared vec table) instead of erroring with a dimension
   // mismatch. A model change is global, so ignore any -c filter for the rebuild.
   if (!force) {
-    try {
-      const stale = db
-        .prepare(`SELECT model FROM content_vectors WHERE model IS NOT NULL AND model != ? LIMIT 1`)
-        .get(model) as { model: string } | undefined;
-      if (stale) {
-        console.log(
-          `${c.yellow}Embedding model changed (${shortModelName(stale.model)} → ${shortModelName(model)}); ` +
-            `re-embedding all collections.${c.reset}`,
-        );
-        force = true;
-        batchOptions = { ...batchOptions, collection: undefined };
-      }
-    } catch {
-      // content_vectors not present yet (fresh index) — nothing to migrate.
+    const stale = findStaleVectorModel(db, model);
+    if (stale) {
+      console.log(
+        `${c.yellow}Embedding model changed (${shortModelName(stale)} → ${shortModelName(model)}); ` +
+          `re-embedding all collections.${c.reset}`,
+      );
+      force = true;
+      batchOptions = { ...batchOptions, collection: undefined };
     }
   }
 

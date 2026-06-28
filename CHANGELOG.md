@@ -19,7 +19,11 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   `sqlite-vec` is a prebuilt loadable extension and `node-llama-cpp` is N-API — neither is
   ABI-bound, so `npm rebuild` is never needed. The Database/Statement abstraction in `src/db.ts`
   is unchanged (the ~118 call sites are untouched). **Node floor raised to >= 22.13** (where
-  `node:sqlite` is flag-free); the full suite passes on node:sqlite.
+  `node:sqlite` is flag-free); the full suite passes on node:sqlite. The informational
+  `node:sqlite` ExperimentalWarning is suppressed at its source in `src/db.ts`, so it never
+  reaches stderr on any launch path (`bin/qmd`, a direct `node`/`tsx` entry, or the test
+  harness) — no dependency on `NODE_OPTIONS`/`NODE_NO_WARNINGS`. `@types/node` is pinned as an
+  explicit devDependency so the build's node:sqlite types no longer rely on transitive resolution.
 - **Setup self-heals a prior/partial install — re-running `/setup` from a fresh download just works.**
   Persistent state lives outside the unzipped folder (`~/.config/qmd/index.yml`, `~/.cache/qmd/`),
   so a re-install used to inherit it and strand the user. Now an auto-persisted *legacy default*
