@@ -3871,6 +3871,16 @@ async function runDoctorDeviceChecks(nextSteps: string[]): Promise<void> {
           );
           nextSteps.push("Unset `QMD_METAL_KEEP_RESIDENCY` so the launcher can disable Metal residency sets; without this, query/vsearch/embed dump a stack trace at exit even on success.");
         }
+        // The device probes fine here, but on macOS 26 (Tahoe) creating a Metal
+        // compute context can still fail with "ggml_metal_init: failed to create
+        // command queue" (also seen when GPU work is denied to a background
+        // process). qmd auto-falls-back to CPU embedding in that case; surface it
+        // so the user isn't surprised by a CPU run despite a healthy device probe.
+        doctorCheck(
+          "darwin metal context",
+          true,
+          "if embedding fails with a Metal 'failed to create command queue' error (macOS 26, or a background-spawned shell), qmd retries on CPU automatically; set QMD_FORCE_CPU=1 to skip the GPU up front."
+        );
       }
     } else {
       const cudaDiagnostic = linuxCudaRuntimeDiagnostic();
