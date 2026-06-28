@@ -95,11 +95,12 @@ case "$CODE" in
      detail "Set your internal registry:  npm config set registry <internal-npm-registry-url>";;
 esac
 
-# ── 2) native prebuilt hosts (NOT the npm registry) ─────────────────────────
-hr "native prebuilt hosts (better-sqlite3, node-llama-cpp, node-gyp headers)"
-detail "better-sqlite3 / node-llama-cpp prebuilts come from the GitHub release CDN"
-detail "(objects.githubusercontent.com), and a build-from-source fallback needs Node"
-detail "headers from nodejs.org — an npm-only proxy may not cover either."
+# ── 2) prebuilt-binary hosts (NOT the npm registry) ─────────────────────────
+hr "prebuilt-binary hosts (node-llama-cpp backend)"
+detail "qmd's SQLite is Node's built-in node:sqlite — NO native build. The remaining native"
+detail "pieces (sqlite-vec's .dylib, node-llama-cpp's N-API backend) install as prebuilt npm"
+detail "packages, but node-llama-cpp may also fetch from the GitHub release CDN"
+detail "(objects.githubusercontent.com) — an npm-only proxy may not cover it."
 NODE_V="$(node -p 'process.version' 2>/dev/null || echo v20.0.0)"
 for pair in \
   "objects.githubusercontent.com|https://objects.githubusercontent.com/" \
@@ -112,8 +113,8 @@ for pair in \
     html:*) bad "$name returned an HTML block page (HTTP ${res#html:}) — a proxy is intercepting it."
             detail "This is the failure a status-only check misses. Fix the proxy/CA (see TLS check below).";;
     http:*) warn "$name HTTP ${res#http:} — may be fine (some hosts 403 a bare path) if the TLS check passes.";;
-    down)   warn "$name unreachable — prebuilt fetch during npm install may fail."
-            detail "better-sqlite3:  npm config set better_sqlite3_binary_host_mirror <mirror>  (or --build-from-source)";;
+    down)   warn "$name unreachable — node-llama-cpp's prebuilt backend fetch may fail."
+            detail "If blocked, node-llama-cpp can build from source (needs cmake + a C/C++ toolchain).";;
   esac
 done
 
@@ -128,7 +129,7 @@ for url in "$REG" "https://objects.githubusercontent.com/"; do
   case "$res" in
     ok)      ok "Node completed TLS to $url";;
     cert)    TLS_BAD=1; bad "Node TLS FAILED to $url (UNABLE_TO_GET_ISSUER_CERT class).";;
-    no-node) warn "node not on PATH — cannot run the Node TLS probe (install Node >=20 first)."; break;;
+    no-node) warn "node not on PATH — cannot run the Node TLS probe (install Node >=22.13 first)."; break;;
     *)       warn "Node could not reach $url (non-cert error; could be network/proxy).";;
   esac
 done
@@ -164,9 +165,9 @@ fi
 # ── 5) functional check (after npm install + build + link) ──────────────────
 hr "functional check"
 if command -v qmd >/dev/null 2>&1; then
-  if qmd status >/dev/null 2>&1; then ok "qmd opens the store — better-sqlite3 + sqlite-vec loaded."
-  else bad "qmd cannot open the store — native modules did not install/load. Run 'qmd doctor'."
-       detail "Usually a blocked prebuilt host or a Node ABI mismatch — try: npm rebuild"; fi
+  if qmd status >/dev/null 2>&1; then ok "qmd opens the store — node:sqlite + sqlite-vec loaded."
+  else bad "qmd cannot open the store — sqlite-vec or node-llama-cpp did not install/load. Run 'qmd doctor'."
+       detail "Usually a blocked prebuilt host (npm registry / release CDN); 'qmd doctor' names the failing piece."; fi
 else
   detail "(qmd not on PATH yet — re-run after 'npm install && npm run build && npm link')"
 fi

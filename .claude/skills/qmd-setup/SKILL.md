@@ -42,9 +42,10 @@ through the `[todo]` items in order. Skip any step already `[ok]`.
 
 ### 0.5. Preflight external services — **the user runs this, not the agent**
 
-qmd-gd's install needs the **npm registry** (JS deps + the sqlite-vec platform packages) and
-the **GitHub release CDN** + **nodejs.org** (native prebuilts / build-from-source headers for
-node-llama-cpp, better-sqlite3, sqlite-vec). The embedding model is **vendored in-repo**, so
+qmd-gd's install needs the **npm registry** (JS deps + the sqlite-vec and node-llama-cpp
+platform packages) and possibly the **GitHub release CDN** (node-llama-cpp's prebuilt backend).
+There is **no native SQLite build** — qmd uses Node's built-in node:sqlite. The embedding
+model is **vendored in-repo**, so
 HuggingFace is **not** needed. On a locked-down network these may be proxied or blocked — and
 a **TLS-intercepting proxy** breaks Node's trust store specifically (a curl check can pass
 while Node fails), so the preflight tests both curl and Node. Test first so a blocked
@@ -103,7 +104,7 @@ live on the user's machine, not in qmd-gd.
 The bundled installer collapses build + link + skill-install into one command and handles
 corporate-proxy TLS. **You (the agent) print it; the user runs it** — by rule 1 the agent
 never runs `npm install` itself. Run it from the unzipped **qmd-gd** folder (a stable
-location — not a throwaway worktree); qmd-gd runs on **Node (>=20)**:
+location — not a throwaway worktree); qmd-gd runs on **Node (>=22.13)**:
 
 ```bash
 bash scripts/install.sh --yes
@@ -121,7 +122,7 @@ QMD_CA_BUNDLE=/path/to/corp-ca.pem bash scripts/install.sh --yes
 the qmd runtime. If `npm install` still fails on certs, `--insecure-tls` retries that one
 command with verification off (insecure — prefer the bundle). Tell the user to persist
 `export QMD_CA_BUNDLE=…` in their shell profile so `qmd embed` and the scheduled refresh keep
-working. After a Node major upgrade, re-run `npm rebuild`.
+working. (No `npm rebuild` is ever needed — the SQLite engine is Node's built-in `node:sqlite`.)
 
 **Manual alternative** (the same steps à la carte, if you'd rather run them one by one):
 
@@ -155,11 +156,10 @@ export QMD_EMBED_MODEL=/abs/path/to/some-model.gguf      # a local .gguf — no 
 export QMD_EMBED_MODEL=hf:<user>/<repo>/<file>.gguf      # downloaded from HuggingFace
 ```
 
-> Note: `npm install` (step 1) still fetches native prebuilts for `node-llama-cpp`,
-> `better-sqlite3`, and `sqlite-vec` from the GitHub release CDN (and Node headers from
-> `nodejs.org` for a build-from-source fallback) — not just the npm registry. The updated
-> preflight (step 0.5) checks both, and behind a TLS-intercepting proxy you'll need a CA
-> bundle (step 1). `qmd doctor` flags a broken native install.
+> Note: there is **no native SQLite build** — qmd uses Node's built-in `node:sqlite`.
+> `npm install` (step 1) still fetches `sqlite-vec` and `node-llama-cpp`'s prebuilt backend
+> (mostly npm packages; node-llama-cpp may also use the GitHub release CDN), so behind a
+> TLS-intercepting proxy you'll need a CA bundle (step 1). `qmd doctor` flags a broken install.
 
 ### 4. Add the repos/folders to search
 

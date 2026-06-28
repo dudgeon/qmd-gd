@@ -217,6 +217,20 @@ const DEFAULT_EMBED_MODEL = "bundled:bge-small-en-v1.5-Q8_0.gguf";
 
 export const DEFAULT_EMBED_MODEL_URI = DEFAULT_EMBED_MODEL;
 
+// Models that were the built-in DEFAULT in an earlier qmd-gd version. A value
+// matching one of these in the user's config (index.yml) was auto-persisted by
+// `ensureModelsConfiguredForCli`, NOT chosen by the user — so we treat it as "use
+// the current default." This auto-migrates an existing install to the vendored
+// bge model instead of stranding it on a model it may no longer be able to fetch
+// (e.g. embeddinggemma behind a HuggingFace-blocking proxy).
+const LEGACY_DEFAULT_EMBED_MODELS = new Set<string>([
+  "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
+]);
+
+export function isLegacyDefaultEmbedModel(model: string): boolean {
+  return LEGACY_DEFAULT_EMBED_MODELS.has(model);
+}
+
 /**
  * Map a "bundled:<file>" URI to its absolute path inside the packaged models/
  * directory. Returns null for non-bundled URIs (hf:..., absolute paths, etc.).
@@ -235,7 +249,12 @@ export type ModelResolutionConfig = {
 };
 
 export function resolveEmbedModel(config?: ModelResolutionConfig): string {
-  return config?.embed || process.env.QMD_EMBED_MODEL || DEFAULT_EMBED_MODEL;
+  const configured = config?.embed;
+  // A persisted *legacy default* was auto-saved, not deliberately chosen, so fall
+  // through to the current default — this is what lets a re-install migrate cleanly
+  // instead of staying pinned to (and stranded on) the old model.
+  if (configured && !isLegacyDefaultEmbedModel(configured)) return configured;
+  return process.env.QMD_EMBED_MODEL || DEFAULT_EMBED_MODEL;
 }
 
 // Local model cache directory

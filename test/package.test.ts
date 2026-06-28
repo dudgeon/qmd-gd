@@ -36,6 +36,23 @@ describe("package test task", () => {
     expect(scriptNames).not.toContain("test:package");
     expect(scriptNames).not.toContain("smoke:package-grammars");
   });
+
+  test("SQLite engine is Node's built-in node:sqlite (no native better-sqlite3)", () => {
+    const allDeps = {
+      ...(pkg.dependencies ?? {}),
+      ...(pkg.devDependencies ?? {}),
+      ...(pkg.optionalDependencies ?? {}),
+    };
+    expect(allDeps["better-sqlite3"], "better-sqlite3 must not be a dependency").toBeUndefined();
+    expect(allDeps["@types/better-sqlite3"]).toBeUndefined();
+    expect(pkg.pnpm?.onlyBuiltDependencies ?? []).not.toContain("better-sqlite3");
+    // Node floor must be >= 22.13 for the built-in node:sqlite engine.
+    expect(pkg.engines?.node).toMatch(/>=\s*22\.13/);
+
+    const db = readFileSync(new URL("src/db.ts", root), "utf8");
+    expect(db, "db.ts must use the built-in node:sqlite").toContain('import("node:sqlite")');
+    expect(db, "db.ts must not import better-sqlite3").not.toMatch(/from ["']better-sqlite3["']|import\(["']better-sqlite3["']\)/);
+  });
 });
 
 describe("published package files", () => {
