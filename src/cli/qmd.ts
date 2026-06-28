@@ -3486,6 +3486,12 @@ function collectEnvironmentOverrides(activeModels: { embed: string }, configMode
   add("NO_COLOR", "disables colored terminal output");
   add("CI", "disables real LLM operations inside QMD's LlamaCpp wrapper");
   add("HF_ENDPOINT", "changes Hugging Face download endpoint used when pulling models");
+  add("QMD_CA_BUNDLE", "CA bundle the launcher exports as NODE_EXTRA_CA_CERTS so Node (qmd fetch + model downloads) trusts a corporate proxy");
+  add("NODE_EXTRA_CA_CERTS", "extra CA certificates Node trusts for TLS (used to traverse a TLS-intercepting proxy); the launcher sets this from QMD_CA_BUNDLE/SSL_CERT_FILE when unset");
+  add("SSL_CERT_FILE", "CA bundle used as a fallback source for NODE_EXTRA_CA_CERTS when QMD_CA_BUNDLE is unset");
+  add("NODE_TLS_REJECT_UNAUTHORIZED", "when 0, TLS certificate verification is DISABLED for all Node connections — insecure; set by `qmd --insecure-tls` for a single run");
+  add("HTTP_PROXY", "proxy URL Node/undici routes HTTP requests through");
+  add("HTTPS_PROXY", "proxy URL Node/undici routes HTTPS requests through");
   add("QMD_WRAPPER_CAPTURE", "test/debug hook for the qmd shell wrapper; should not be set in normal use");
   add("WSL_DISTRO_NAME", "enables WSL path handling heuristics");
   add("WSL_INTEROP", "enables WSL path handling heuristics");

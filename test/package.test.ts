@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, openSync, readSync, closeSync } from "node:fs";
+import { DEFAULT_EMBED_MODEL_URI, resolveBundledModelPath } from "../src/llm";
 
 const root = new URL("..", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
@@ -37,12 +38,30 @@ describe("package test task", () => {
 
 describe("published package files", () => {
   test("ships bin, dist, skills, and the build/test scripts", () => {
-    for (const entry of ["bin/", "dist/", ".claude/skills/", ".claude/agents/", "scripts/build.mjs", "scripts/test-all.mjs"]) {
+    for (const entry of ["bin/", "dist/", "models/", ".claude/skills/", ".claude/agents/", "scripts/build.mjs", "scripts/test-all.mjs", "scripts/install.sh"]) {
       expect(pkg.files, `published package files should include ${entry}`).toContain(entry);
     }
     // Grammar/smoke helpers were removed with the AST/Bun teardown.
     expect(pkg.files).not.toContain("scripts/check-package-grammars.mjs");
     expect(pkg.files).not.toContain("scripts/package-smoke.mjs");
+  });
+
+  test("vendors the default embedding model as a valid GGUF", () => {
+    // The offline-install guarantee depends on this file actually shipping.
+    expect(DEFAULT_EMBED_MODEL_URI).toBe("bundled:bge-small-en-v1.5-Q8_0.gguf");
+    const modelPath = resolveBundledModelPath(DEFAULT_EMBED_MODEL_URI);
+    expect(modelPath).toBeTruthy();
+    expect(existsSync(modelPath!), `vendored model missing at ${modelPath}`).toBe(true);
+    // First 4 bytes must be the GGUF magic — guards against a corrupt file or an
+    // un-smudged Git-LFS pointer landing in the package.
+    const fd = openSync(modelPath!, "r");
+    try {
+      const buf = Buffer.alloc(4);
+      readSync(fd, buf, 0, 4, 0);
+      expect(buf.toString("latin1")).toBe("GGUF");
+    } finally {
+      closeSync(fd);
+    }
   });
 
   test("publishes the qmd skill with the expected structure", () => {

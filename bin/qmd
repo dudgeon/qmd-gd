@@ -46,6 +46,37 @@ if (process.platform === "darwin" && process.env.QMD_METAL_KEEP_RESIDENCY !== "1
   process.env.GGML_METAL_NO_RESIDENCY = process.env.GGML_METAL_NO_RESIDENCY || "1";
 }
 
+// --- Corporate-proxy / TLS bootstrap ---------------------------------------
+// qmd's own fetch and node-llama-cpp's model downloader (-> ipull -> Node fetch)
+// use Node's trust store, which ignores curl's --cacert bundle. Behind a
+// TLS-intercepting proxy this surfaces as UNABLE_TO_GET_ISSUER_CERT_LOCALLY.
+// Node reads NODE_EXTRA_CA_CERTS once at startup, so we resolve a CA bundle here
+// and set it on the CHILD's env before spawn — covering both qmd and ipull
+// without a re-exec. No org-specific path is baked into the repo: supply it via
+// QMD_CA_BUNDLE (or the standard NODE_EXTRA_CA_CERTS / SSL_CERT_FILE). The
+// qmd-setup skill prompts the agent, which knows the environment, to provide it.
+//
+// `--insecure-tls` is a launcher-level escape hatch (consumed here, never
+// forwarded to the CLI) that disables TLS verification for this invocation only.
+const rawArgs = process.argv.slice(2);
+const insecureTls = rawArgs.includes("--insecure-tls");
+const forwardArgs = rawArgs.filter((a) => a !== "--insecure-tls");
+
+const childEnv = { ...process.env };
+if (!childEnv.NODE_EXTRA_CA_CERTS) {
+  const caBundle = childEnv.QMD_CA_BUNDLE || childEnv.SSL_CERT_FILE;
+  if (caBundle && existsSync(caBundle)) {
+    childEnv.NODE_EXTRA_CA_CERTS = caBundle;
+  }
+}
+if (insecureTls) {
+  childEnv.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  console.error(
+    "qmd: --insecure-tls set — TLS certificate verification is DISABLED for this run. " +
+    "Prefer a CA bundle via QMD_CA_BUNDLE/NODE_EXTRA_CA_CERTS where possible."
+  );
+}
+
 // In published packages, bin/qmd must run dist/. In a git checkout, however,
 // dist/ is often ignored and can be stale after git reset or branch switches.
 // Prefer source mode only for checkouts so ./bin/qmd reflects the checked-out
@@ -74,7 +105,7 @@ if (sourceAllowed && existsSync(resolve(pkgDir, ".git")) && existsSync(tsEntry))
   const tsxEntry = resolve(pkgDir, "node_modules/tsx/dist/cli.mjs");
   if (existsSync(tsxEntry)) {
     useSourceMode = true;
-    sourceArgs = [tsxEntry, tsEntry, ...process.argv.slice(2)];
+    sourceArgs = [tsxEntry, tsEntry, ...forwardArgs];
   }
 }
 
@@ -88,10 +119,11 @@ if (!useSourceMode && !existsSync(jsEntry)) {
 // qmd-gd is Node-only: always launch under `node`. Source mode runs the
 // TypeScript entry via tsx; dist mode runs the compiled JS directly.
 const runner = "node";
-const args = useSourceMode ? sourceArgs : [jsEntry, ...process.argv.slice(2)];
+const args = useSourceMode ? sourceArgs : [jsEntry, ...forwardArgs];
 
 const child = spawn(runner, args, {
   stdio: "inherit",
+  env: childEnv,
 });
 
 child.on("exit", (code, signal) => {

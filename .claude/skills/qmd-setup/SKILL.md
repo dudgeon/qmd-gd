@@ -15,10 +15,10 @@ Guide a (possibly non-technical) user through standing up qmd-gd end to end.
    `qmd embed`, `qmd pull` — is **printed for the user to run**, never run by the agent.
    Present the exact command, explain it, and confirm completion before the next step.
 
-2. **Never contact an external network domain.** In this environment the agent may reach
-   only `capitalone.com` and `github.com`; the user reaches everything else from their own
-   terminal. So the agent must **not** run `curl`/`wget`, `npm install`, `qmd pull`, or the
-   **preflight script** — anything that touches the npm registry, HuggingFace, or prebuilt
+2. **Never contact an external network domain.** In locked-down environments the agent may
+   reach only an allowlisted set of domains; the user reaches everything else from their own
+   terminal. So the agent must **not** run `curl`/`wget`, `npm install`, `bash scripts/install.sh`,
+   `qmd pull`, or the **preflight script** — anything that touches the npm registry or prebuilt
    hosts. Hand those commands to the user and read back what they paste.
 
 The agent may itself run only **local, read-only** checks — chiefly `qmd-setup-context.sh`,
@@ -42,11 +42,13 @@ through the `[todo]` items in order. Skip any step already `[ok]`.
 
 ### 0.5. Preflight external services — **the user runs this, not the agent**
 
-qmd-gd reaches three external services: the **npm registry** (JS deps + the sqlite-vec
-platform packages), **HuggingFace** (the embedding model), and **GitHub release hosts**
-(native prebuilts for node-llama-cpp / better-sqlite3). On a locked-down corporate network
-any of these may be proxied through an internal mirror — or blocked. Test them first so a
-blocked dependency surfaces here, not as a confusing failure mid-install.
+qmd-gd's install needs the **npm registry** (JS deps + the sqlite-vec platform packages) and
+the **GitHub release CDN** + **nodejs.org** (native prebuilts / build-from-source headers for
+node-llama-cpp, better-sqlite3, sqlite-vec). The embedding model is **vendored in-repo**, so
+HuggingFace is **not** needed. On a locked-down network these may be proxied or blocked — and
+a **TLS-intercepting proxy** breaks Node's trust store specifically (a curl check can pass
+while Node fails), so the preflight tests both curl and Node. Test first so a blocked
+dependency surfaces here, not as a confusing failure mid-install.
 
 The preflight script `curl`s those endpoints, so by **rule 2 above the agent must not run
 it.** Give the user this command to run in their own terminal and ask them to paste back the
@@ -60,82 +62,85 @@ For each service it tests the **effective endpoint** — the user's configured i
 if set, else the public default — and on failure prints the exact knob to set plus a repro
 command. Read the pasted output to decide what to tell the user next.
 
-**If a service reports `[FAIL]`:** ask the user for that service's internal URL, set it, and
-re-run the preflight until it passes — only then proceed to install. The knobs:
+**If a check reports `[FAIL]`:** set the matching knob and re-run the preflight until it
+passes — only then install. The knobs:
 
+- **Node TLS (`UNABLE_TO_GET_ISSUER_CERT`)** → point Node at the corporate CA bundle.
+  **You, the agent, know this environment's bundle path — give it to the user** (if not, ask
+  for their corporate root-CA `.pem`): `export QMD_CA_BUNDLE=/path/to/corp-ca.pem` (and
+  `export NODE_EXTRA_CA_CERTS="$QMD_CA_BUNDLE"` for `npm install`). `scripts/install.sh` does
+  this automatically when `QMD_CA_BUNDLE` is set.
 - **npm registry** → `npm config set registry <url>` (or `~/.npmrc` `registry=`, or
-  `NPM_CONFIG_REGISTRY`). This is usually the org's Artifactory npm virtual repo.
-- **HuggingFace** → `export HF_ENDPOINT=<mirror>` — or skip it entirely with
-  `export QMD_EMBED_MODEL=/abs/path/to/embeddinggemma-300M-Q8_0.gguf` (a pre-staged file).
-- **native prebuilts** → if GitHub release hosts are blocked, either set
+  `NPM_CONFIG_REGISTRY`) — usually the org's Artifactory npm virtual repo.
+- **native prebuilts** → if the GitHub release CDN is blocked, either set
   `npm config set better_sqlite3_binary_host_mirror <url>` or build from source
   (`npm install --build-from-source`; node-llama-cpp needs cmake + a C/C++ toolchain).
 
-Persist whatever you set (shell profile / `~/.npmrc` / a project `.env`) so install, `qmd
-embed`, and the scheduled refresh all use the same endpoints. Re-run the preflight (and the
-native functional check passes once `qmd` is installed).
+Persist whatever you set (shell profile / `~/.npmrc`) so install, `qmd embed`, and the
+scheduled refresh use the same settings. The native functional check passes once `qmd` is installed.
 
-### 1. Build & link the CLI (if `qmd` is not on PATH)
+### 1. Install — one command (build, link, skills)
 
-From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a worktree). qmd-gd runs on
-**Node (>=20)**:
-
-```bash
-npm install        # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
-npm run build      # compiles dist/ via tsc
-npm link           # exposes `qmd` globally (or: npm i -g .)
-```
-
-After a Node major-version upgrade, re-run `npm rebuild` so the native modules match the
-new ABI.
-
-### 2. Make the qmd skills available everywhere
-
-qmd-gd ships its skills as plain folders under `.claude/skills/` in this checkout, so
-Claude Code **already auto-discovers them when you open this folder** (that is how this
-skill ran — no plugin, no install). To use the **`qmd`** (search) and **`ask-qmd`**
-(ask-a-question) skills from your **other** projects too, symlink them into your user
-skills. `qmd skill install --global` does exactly that — live symlinks, so a later `git
-pull` keeps them current:
+The bundled installer collapses build + link + skill-install into one command and handles
+corporate-proxy TLS. **You (the agent) print it; the user runs it** — by rule 1 the agent
+never runs `npm install` itself. From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a
+worktree); qmd-gd runs on **Node (>=20)**:
 
 ```bash
-qmd skill install --global        # symlinks ~/.claude/skills/{qmd,ask-qmd} -> this checkout
+bash scripts/install.sh --yes
 ```
+
+**Behind a TLS-intercepting proxy**, Node must trust the corporate CA bundle or `npm install`
+fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`. **You, the agent, know this environment's CA
+bundle path — supply it** (if you don't, ask the user for their corporate root-CA `.pem`):
+
+```bash
+QMD_CA_BUNDLE=/path/to/corp-ca.pem bash scripts/install.sh --yes
+```
+
+`install.sh` exports `NODE_EXTRA_CA_CERTS` for `npm install` and reuses `QMD_CA_BUNDLE` for
+the qmd runtime. If `npm install` still fails on certs, `--insecure-tls` retries that one
+command with verification off (insecure — prefer the bundle). Tell the user to persist
+`export QMD_CA_BUNDLE=…` in their shell profile so `qmd embed` and the scheduled refresh keep
+working. After a Node major upgrade, re-run `npm rebuild`.
+
+**Manual alternative** (the same steps à la carte, if you'd rather run them one by one):
+
+```bash
+npm install && npm run build && npm link
+qmd skill install --global --yes   # symlinks ~/.claude/skills/{qmd,ask-qmd} + the qmd-retrieve agent
+```
+
+### 2. (Covered by step 1) Make the qmd skills available everywhere
+
+`scripts/install.sh` already ran `qmd skill install --global --yes`, which live-symlinks the
+**`qmd`** (search) and **`ask-qmd`** (ask-a-question) skills — plus the `qmd-retrieve` agent —
+into your user `~/.claude/skills/`, so they work from your **other** projects too (a later
+`git pull` keeps them current). The `--yes` flag skips the per-symlink `[y/N]` prompts.
 
 Verify: `ls -l ~/.claude/skills/` should show `qmd` and `ask-qmd` symlinks into this checkout.
 
-### 3. Get the embedding model (test the dependency first)
+### 3. The embedding model is vendored — nothing to download
 
-qmd-gd downloads **only** the embedding model (~333MB, no generative/reranker models)
-from HuggingFace on first use. On a locked-down work network this is the dependency most
-likely to be blocked — the **user-run preflight (step 0.5)** tests reachability, and the
-local step-0 probe reports whether the model is already cached. Check those before the user
-downloads:
+qmd-gd ships its default embedding model **in the repo**
+(`models/bge-small-en-v1.5-Q8_0.gguf`, ~35 MB, MIT-licensed), referenced internally as
+`bundled:bge-small-en-v1.5-Q8_0.gguf`. A fresh clone embeds with **no network** — there is
+**no `qmd pull` step** on the default path, which is exactly what makes qmd-gd work where
+HuggingFace is blocked. The step-0 probe confirms the file is present.
 
-- **Reachable / already cached** → just pull it:
+To use a **different** model instead, set `QMD_EMBED_MODEL` (run `qmd pull` only for an
+`hf:` URI, which needs HuggingFace reachable):
 
-  ```bash
-  qmd pull        # downloads the embedding model; etag-cached, so it's a one-time fetch
-  ```
+```bash
+export QMD_EMBED_MODEL=/abs/path/to/some-model.gguf      # a local .gguf — no network
+export QMD_EMBED_MODEL=hf:<user>/<repo>/<file>.gguf      # downloaded from HuggingFace
+```
 
-- **Blocked** (probe said it can't reach HuggingFace) → use one offline path instead of
-  `qmd pull`, then continue:
-
-  ```bash
-  # (a) point at a pre-staged local file (downloaded on an allowed machine) — no network:
-  export QMD_EMBED_MODEL=/abs/path/to/embeddinggemma-300M-Q8_0.gguf
-  # (b) or drop the .gguf (+ its .etag) into ~/.cache/qmd/models/ and qmd pull skips the fetch
-  # (c) or point at an internal HuggingFace mirror, then qmd pull:
-  export HF_ENDPOINT=https://<your-org-hf-mirror>
-  ```
-
-  Persist whichever you choose (e.g. in `.env` / shell profile) so `qmd embed` and the
-  scheduled refresh use the same model. Re-run the step-0 probe to confirm it now reports `[ok]`.
-
-> Note: `npm install` (step 1) also fetches native prebuilts for `node-llama-cpp`,
-> `better-sqlite3`, and `sqlite-vec` from their own hosts (not just the npm registry). If
-> your Artifactory proxy doesn't cover those and `npm install` fails to produce a working
-> binary, `qmd doctor` will flag it — install build tools or a proxied prebuilt source.
+> Note: `npm install` (step 1) still fetches native prebuilts for `node-llama-cpp`,
+> `better-sqlite3`, and `sqlite-vec` from the GitHub release CDN (and Node headers from
+> `nodejs.org` for a build-from-source fallback) — not just the npm registry. The updated
+> preflight (step 0.5) checks both, and behind a TLS-intercepting proxy you'll need a CA
+> bundle (step 1). `qmd doctor` flags a broken native install.
 
 ### 4. Add the repos/folders to search
 
