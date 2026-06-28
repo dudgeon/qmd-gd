@@ -21,8 +21,70 @@ import {
   withLLMSession,
   canUnloadLLM,
   SessionReleasedError,
+  isBgeEmbeddingModel,
+  isQwen3EmbeddingModel,
+  resolveBundledModelPath,
+  formatQueryForEmbedding,
+  formatDocForEmbedding,
+  DEFAULT_EMBED_MODEL_URI,
   type ILLMSession,
 } from "../src/llm.js";
+
+describe("embedding model family detection", () => {
+  test("isBgeEmbeddingModel matches bge model names, not incidental path substrings", () => {
+    for (const uri of [
+      "bundled:bge-small-en-v1.5-Q8_0.gguf",
+      "hf:ggml-org/bge-small-en-v1.5-Q8_0-GGUF/bge-small-en-v1.5-q8_0.gguf",
+      "/abs/path/bge-small-en-v1.5-Q8_0.gguf",
+      "hf:BAAI/bge-large-en-v1.5",
+    ]) {
+      expect(isBgeEmbeddingModel(uri), uri).toBe(true);
+    }
+    for (const uri of [
+      // "bge"/"baai" appears only inside a directory name — must NOT misfire.
+      "/Users/bgevans/models/embeddinggemma-300M-Q8_0.gguf",
+      "/opt/abge/qwen-embed.gguf",
+      "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
+      "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf",
+    ]) {
+      expect(isBgeEmbeddingModel(uri), uri).toBe(false);
+    }
+  });
+
+  test("the three families are mutually exclusive for the models qmd ships/supports", () => {
+    const bge = "bundled:bge-small-en-v1.5-Q8_0.gguf";
+    const qwen = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
+    const gemma = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+    expect([isBgeEmbeddingModel(bge), isQwen3EmbeddingModel(bge)]).toEqual([true, false]);
+    expect([isBgeEmbeddingModel(qwen), isQwen3EmbeddingModel(qwen)]).toEqual([false, true]);
+    expect([isBgeEmbeddingModel(gemma), isQwen3EmbeddingModel(gemma)]).toEqual([false, false]);
+    // The bge default must produce the bge query instruction, not the nomic prefix.
+    expect(formatQueryForEmbedding("q", bge)).toBe(
+      "Represent this sentence for searching relevant passages: q"
+    );
+    expect(formatDocForEmbedding("body", "Title", bge)).toBe("Title\nbody");
+  });
+});
+
+describe("resolveBundledModelPath", () => {
+  test("maps the default bundled URI to a flat file under models/", () => {
+    const p = resolveBundledModelPath(DEFAULT_EMBED_MODEL_URI);
+    expect(p).toBeTruthy();
+    expect(p!.replace(/\\/g, "/")).toMatch(/\/models\/bge-small-en-v1\.5-Q8_0\.gguf$/);
+  });
+
+  test("returns null for non-bundled URIs (hf:, absolute path)", () => {
+    expect(resolveBundledModelPath("hf:ggml-org/x/y.gguf")).toBeNull();
+    expect(resolveBundledModelPath("/abs/path/model.gguf")).toBeNull();
+    expect(resolveBundledModelPath("bge-small.gguf")).toBeNull();
+  });
+
+  test("basename() neutralizes path traversal — result stays under models/", () => {
+    const p = resolveBundledModelPath("bundled:../../etc/passwd");
+    expect(p!.replace(/\\/g, "/")).toMatch(/\/models\/passwd$/);
+    expect(p).not.toContain("..");
+  });
+});
 
 describe("model name resolution", () => {
   // qmd-gd runs only the local embedding model; generative query expansion and
@@ -352,7 +414,7 @@ describe("LLM context parallelism safety", () => {
 });
 
 describe("LlamaCpp model resolution (config > env > default)", () => {
-  const HARDCODED_EMBED = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+  const HARDCODED_EMBED = "bundled:bge-small-en-v1.5-Q8_0.gguf";
 
   test("uses hardcoded default when no config or env is set", () => {
     const prev = process.env.QMD_EMBED_MODEL;

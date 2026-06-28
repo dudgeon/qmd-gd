@@ -70,7 +70,8 @@ export async function withNativeStdoutRedirectedToStderr<T>(fn: () => Promise<T>
 }
 
 import { homedir } from "os";
-import { join } from "path";
+import { join, dirname, resolve, basename } from "path";
+import { fileURLToPath } from "url";
 import { existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
 
 // =============================================================================
@@ -86,27 +87,48 @@ export function isQwen3EmbeddingModel(modelUri: string): boolean {
 }
 
 /**
+ * Detect if a model URI is a BAAI bge embedding model (bge-small/base/large).
+ * bge-v1.5 expects a retrieval instruction prefix on queries and bare-text
+ * passages — distinct from both the Qwen3 and nomic/embeddinggemma styles.
+ */
+export function isBgeEmbeddingModel(modelUri: string): boolean {
+  // Anchor to a model-name token so an incidental "bge"/"baai" substring in a
+  // directory path does NOT misfire — e.g. /Users/bgevans/embeddinggemma.gguf or
+  // /opt/abge/qwen-embed.gguf must classify as their real family, not bge.
+  return /(^|[/:_-])bge[-_]/i.test(modelUri) || /(^|[/:_-])baai([/:_-]|$)/i.test(modelUri);
+}
+
+/**
  * Format a query for embedding.
- * Uses nomic-style task prefix format for embeddinggemma (default).
+ * Uses nomic-style task prefix format for embeddinggemma.
  * Uses Qwen3-Embedding instruct format when a Qwen embedding model is active.
+ * Uses the bge retrieval instruction for BAAI bge models (the default).
  */
 export function formatQueryForEmbedding(query: string, modelUri?: string): string {
   const uri = modelUri ?? resolveEmbedModel();
   if (isQwen3EmbeddingModel(uri)) {
     return `Instruct: Retrieve relevant documents for the given query\nQuery: ${query}`;
   }
+  if (isBgeEmbeddingModel(uri)) {
+    // bge-v1.5: queries carry the retrieval instruction; passages stay bare text.
+    return `Represent this sentence for searching relevant passages: ${query}`;
+  }
   return `task: search result | query: ${query}`;
 }
 
 /**
  * Format a document for embedding.
- * Uses nomic-style format with title and text fields (default).
- * Qwen3-Embedding encodes documents as raw text without special prefixes.
+ * Uses nomic-style format with title and text fields for embeddinggemma.
+ * Qwen3-Embedding and bge encode documents as raw text without a task prefix.
  */
 export function formatDocForEmbedding(text: string, title?: string, modelUri?: string): string {
   const uri = modelUri ?? resolveEmbedModel();
   if (isQwen3EmbeddingModel(uri)) {
     // Qwen3-Embedding: documents are raw text, no task prefix
+    return title ? `${title}\n${text}` : text;
+  }
+  if (isBgeEmbeddingModel(uri)) {
+    // bge: passages are raw text (optionally title-prefixed), no task prefix.
     return title ? `${title}\n${text}` : text;
   }
   return `title: ${title || "none"} | text: ${text}`;
@@ -170,16 +192,43 @@ export interface ILLMSession {
 // Model Configuration
 // =============================================================================
 
-// HuggingFace model URIs for node-llama-cpp
-// Format: hf:<user>/<repo>/<file>
-// Override via QMD_EMBED_MODEL env var (e.g. hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf)
+// Embedding model resolution.
 //
 // qmd-gd runs only the local embedding model. Generative query expansion and
 // reranking are delegated to the calling agent (ADR 0002), so the former
 // generate/rerank model URIs and their resolvers have been removed.
-const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+//
+// Three URI shapes are understood:
+//   bundled:<file>      a GGUF committed in-repo under models/ (the default) —
+//                       resolved to an absolute on-disk path with NO network.
+//   hf:<user>/<repo>/<file>   downloaded from HuggingFace via node-llama-cpp.
+//   <absolute path>     a local .gguf, passed through as-is (QMD_EMBED_MODEL).
+//
+// The default is bge-small-en-v1.5 (BAAI, MIT, 384-dim), vendored so a fresh
+// clone needs no network to embed. Override with QMD_EMBED_MODEL=<abs path> or
+// an hf: URI (e.g. hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf).
+
+// Package root: dist/llm.js -> dist/.. and src/llm.ts -> src/.. both resolve to
+// the package directory that holds models/.
+const PKG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const BUNDLED_MODEL_DIR = join(PKG_ROOT, "models");
+
+const DEFAULT_EMBED_MODEL = "bundled:bge-small-en-v1.5-Q8_0.gguf";
 
 export const DEFAULT_EMBED_MODEL_URI = DEFAULT_EMBED_MODEL;
+
+/**
+ * Map a "bundled:<file>" URI to its absolute path inside the packaged models/
+ * directory. Returns null for non-bundled URIs (hf:..., absolute paths, etc.).
+ * The "bundled:" identity is stable and portable, so it is what gets written
+ * into the index's model column and embedding fingerprint.
+ */
+export function resolveBundledModelPath(model: string): string | null {
+  if (!model.startsWith("bundled:")) return null;
+  // basename() neutralizes any path separators / "..": bundled models are flat
+  // files directly under models/, so a "bundled:../../etc/x" can never escape it.
+  return join(BUNDLED_MODEL_DIR, basename(model.slice("bundled:".length)));
+}
 
 export type ModelResolutionConfig = {
   embed?: string;
@@ -362,6 +411,21 @@ export async function pullModels(
   const results: PullResult[] = [];
   for (const model of models) {
     let refreshed = false;
+
+    // Bundled models are committed in-repo — nothing to download.
+    const bundledPath = resolveBundledModelPath(model);
+    if (bundledPath) {
+      if (!existsSync(bundledPath)) {
+        throw new Error(
+          `Bundled embedding model not found at ${bundledPath}. ` +
+          `The packaged models/ asset may be missing.`
+        );
+      }
+      validateGgufFile(bundledPath, model);
+      results.push({ model, path: bundledPath, sizeBytes: statSync(bundledPath).size, refreshed: false });
+      continue;
+    }
+
     const hfRef = parseHfUri(model);
     const filename = model.split("/").pop();
     const entries = readdirSync(cacheDir, { withFileTypes: true });
@@ -800,6 +864,20 @@ export class LlamaCpp implements LLM {
    */
   private async resolveModel(modelUri: string): Promise<string> {
     this.ensureModelCacheDir();
+    // Bundled models ship in-repo under models/; resolve to the on-disk file with
+    // no network round-trip — the same fast path as an explicit local QMD_EMBED_MODEL.
+    const bundled = resolveBundledModelPath(modelUri);
+    if (bundled) {
+      if (!existsSync(bundled)) {
+        throw new Error(
+          `Bundled embedding model not found at ${bundled}.\n` +
+          `The packaged models/ asset appears to be missing — reinstall qmd-gd, or set ` +
+          `QMD_EMBED_MODEL to a local .gguf file.`
+        );
+      }
+      validateGgufFile(bundled, modelUri);
+      return bundled;
+    }
     // resolveModelFile handles HF URIs and downloads to the cache dir
     const { resolveModelFile } = await loadNodeLlamaCpp();
     const modelPath = await resolveModelFile(modelUri, this.modelCacheDir);

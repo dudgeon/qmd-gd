@@ -18,10 +18,12 @@
   "files": [
     "bin/",
     "dist/",
+    "models/",
     ".claude/skills/",
     ".claude/agents/",
     "scripts/build.mjs",
     "scripts/test-all.mjs",
+    "scripts/install.sh",
     "docs/adr/",
     "LICENSE",
     "CHANGELOG.md"

@@ -52,6 +52,7 @@ import {
   insertContent,
   insertDocument,
   generateEmbeddings,
+  clearAllEmbeddings,
   getHybridRrfWeights,
   _resetProductionModeForTesting,
   hybridQuery,
@@ -284,6 +285,49 @@ afterAll(async () => {
 // =============================================================================
 // Store Creation Tests
 // =============================================================================
+
+describe("Vector table migration on dimension change", () => {
+  test("ensureVecTable rejects a dimension change; a global clear lets the re-embed recreate it", async () => {
+    const store = await createTestStore();
+    try {
+      // Simulate an existing index embedded at 768 dims (embeddinggemma).
+      store.ensureVecTable(768);
+      // Swapping to a 384-dim model (bge) must fail loudly, not silently corrupt the index,
+      // and must steer the user to a GLOBAL re-embed because the vec table is shared.
+      expect(() => store.ensureVecTable(384)).toThrow(/dimension mismatch/i);
+      expect(() => store.ensureVecTable(384)).toThrow(/qmd embed -f.*without -c/i);
+
+      // `qmd embed -f` (no collection) drops the shared vec table...
+      clearAllEmbeddings(store.db);
+      // ...so the re-embed recreates it at the new dimension without error.
+      expect(() => store.ensureVecTable(384)).not.toThrow();
+    } finally {
+      await cleanupTestDb(store);
+    }
+  });
+
+  test("a collection-scoped clear keeps the shared vec table while other collections hold vectors", async () => {
+    // This is why the dimension-mismatch error steers users to a GLOBAL re-embed: a
+    // per-collection clear only drops the shared table once content_vectors is fully
+    // empty, so with multiple collections it stays at the old dimension.
+    const store = await createTestStore();
+    try {
+      store.ensureVecTable(768);
+      const now = new Date().toISOString();
+      const ins = store.db.prepare(
+        `INSERT INTO content_vectors (hash, seq, pos, model, embedded_at) VALUES (?, 0, 0, 'test', ?)`
+      );
+      ins.run("keepme", now); // a vector from some other collection that the scoped clear won't touch
+      clearAllEmbeddings(store.db, "target-collection");
+      const exists = store.db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='vectors_vec'`)
+        .get();
+      expect(exists, "shared vec table should survive while other vectors remain").toBeTruthy();
+    } finally {
+      await cleanupTestDb(store);
+    }
+  });
+});
 
 describe("Store Creation", () => {
   test("createStore throws without explicit path in test mode", () => {
@@ -534,19 +578,47 @@ describe("Document Helpers", () => {
 // =============================================================================
 
 describe("Embedding Formatting", () => {
-  test("formatQueryForEmbedding adds search task prefix", () => {
-    const formatted = formatQueryForEmbedding("how to deploy");
+  const NOMIC = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+  const BGE = "bundled:bge-small-en-v1.5-Q8_0.gguf";
+
+  test("formatQueryForEmbedding adds the nomic search task prefix for embeddinggemma", () => {
+    const formatted = formatQueryForEmbedding("how to deploy", NOMIC);
     expect(formatted).toBe("task: search result | query: how to deploy");
   });
 
-  test("formatDocForEmbedding adds title and text prefix", () => {
-    const formatted = formatDocForEmbedding("Some content", "My Title");
+  test("formatDocForEmbedding adds nomic title and text prefix for embeddinggemma", () => {
+    const formatted = formatDocForEmbedding("Some content", "My Title", NOMIC);
     expect(formatted).toBe("title: My Title | text: Some content");
   });
 
-  test("formatDocForEmbedding handles missing title", () => {
-    const formatted = formatDocForEmbedding("Some content");
+  test("formatDocForEmbedding handles missing title (nomic)", () => {
+    const formatted = formatDocForEmbedding("Some content", undefined, NOMIC);
     expect(formatted).toBe("title: none | text: Some content");
+  });
+
+  test("formatQueryForEmbedding uses the bge retrieval instruction", () => {
+    const formatted = formatQueryForEmbedding("how to deploy", BGE);
+    expect(formatted).toBe(
+      "Represent this sentence for searching relevant passages: how to deploy"
+    );
+  });
+
+  test("formatDocForEmbedding keeps bge passages as bare text", () => {
+    expect(formatDocForEmbedding("Some content", "My Title", BGE)).toBe("My Title\nSome content");
+    expect(formatDocForEmbedding("Some content", undefined, BGE)).toBe("Some content");
+  });
+
+  test("the default embed model formats as bge", () => {
+    const prev = process.env.QMD_EMBED_MODEL;
+    delete process.env.QMD_EMBED_MODEL;
+    try {
+      expect(formatQueryForEmbedding("how to deploy")).toBe(
+        "Represent this sentence for searching relevant passages: how to deploy"
+      );
+    } finally {
+      if (prev === undefined) delete process.env.QMD_EMBED_MODEL;
+      else process.env.QMD_EMBED_MODEL = prev;
+    }
   });
 });
 
@@ -619,14 +691,16 @@ describe("Document Chunking", () => {
     }
   });
 
-  test("chunkDocument with default params uses 900-token chunks", () => {
-    // Default is CHUNK_SIZE_CHARS (3600 chars) with CHUNK_OVERLAP_CHARS (540 chars)
+  test("chunkDocument with default params fills near the default char budget", () => {
+    // Default is CHUNK_SIZE_CHARS (1920 chars) with CHUNK_OVERLAP_CHARS (288 chars),
+    // sized for bge-small's 512-token context.
     const content = "Word ".repeat(2500);  // ~12500 chars
     const chunks = chunkDocument(content);
     expect(chunks.length).toBeGreaterThan(1);
-    // Each chunk should be around 3600 chars (except last)
-    expect(chunks[0]!.text.length).toBeGreaterThan(2800);
-    expect(chunks[0]!.text.length).toBeLessThanOrEqual(3600);
+    // First chunk should fill close to the char budget (this input has no headings
+    // or paragraphs, so it breaks on the nearest word boundary to the limit).
+    expect(chunks[0]!.text.length).toBeGreaterThan(1400);
+    expect(chunks[0]!.text.length).toBeLessThanOrEqual(1920);
   });
 });
 

@@ -16,8 +16,8 @@ step. Two hard rules from that skill that you MUST honor:
 
 - **Never run state-mutating commands for the user** (`npm install`, `qmd skill install`,
   `qmd collection add`, `qmd update`, `qmd embed`, `qmd pull`). Print them for the user to run.
-- **Never contact an external network domain.** Only `capitalone.com` / `github.com` are
-  reachable by you; the user runs anything that hits the npm registry, HuggingFace, or
+- **Never contact an external network domain.** In locked-down environments you may reach
+  only an allowlisted set of domains; the user runs anything that hits the npm registry or
   prebuilt hosts (including the preflight script) from their own terminal.
 
 The only setup helper you may run yourself is the local, network-free probe
@@ -168,9 +168,9 @@ npx vitest run --reporter=verbose test/
 
 - SQLite FTS5 for full-text search (BM25)
 - sqlite-vec for vector similarity search
-- node-llama-cpp for **embeddings only** (embeddinggemma). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
+- node-llama-cpp for **embeddings only** (default: bge-small-en-v1.5, MIT, vendored in-repo under `models/` and referenced as `bundled:bge-small-en-v1.5-Q8_0.gguf`). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
 - Reciprocal Rank Fusion (RRF) for combining results
-- Chunking is regex/markdown-only: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries. There is no AST/code-aware chunking.
+- Chunking is regex/markdown-only: 480 tokens/chunk with 15% overlap (sized to fit bge-small's 512-token context), prefers markdown headings as boundaries. There is no AST/code-aware chunking.
 
 ## Important: Do NOT run automatically
 

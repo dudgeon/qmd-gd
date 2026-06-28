@@ -50,13 +50,18 @@ const EMBED_FINGERPRINT_PROBE_QUERY = "__qmd_embedding_query_probe__";
 const EMBED_FINGERPRINT_PROBE_TITLE = "__qmd_embedding_title_probe__";
 const EMBED_FINGERPRINT_PROBE_DOC = "__qmd_embedding_document_probe__";
 
-// Chunking: 900 tokens per chunk with 15% overlap
-// Increased from 800 to accommodate smart chunking finding natural break points
-export const CHUNK_SIZE_TOKENS = 900;
-export const CHUNK_OVERLAP_TOKENS = Math.floor(CHUNK_SIZE_TOKENS * 0.15);  // 135 tokens (15% overlap)
+// Chunking: 480 tokens per chunk with 15% overlap.
+// Sized to fit the default embedding model's context. bge-small-en-v1.5 has a
+// 512-token context; formatDocForEmbedding prepends a title and BERT adds
+// [CLS]/[SEP], so 480 leaves headroom and avoids embed-time truncation of the
+// chunk tail. (Previously 900, for embeddinggemma's 2048-token context.)
+// CHUNK_SIZE_TOKENS is part of the embedding fingerprint, so changing it forces
+// a re-embed — consistent with the bge default switch.
+export const CHUNK_SIZE_TOKENS = 480;
+export const CHUNK_OVERLAP_TOKENS = Math.floor(CHUNK_SIZE_TOKENS * 0.15);  // 72 tokens (15% overlap)
 // Fallback char-based approximation for sync chunking (~4 chars per token)
-export const CHUNK_SIZE_CHARS = CHUNK_SIZE_TOKENS * 4;  // 3600 chars
-export const CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * 4;  // 540 chars
+export const CHUNK_SIZE_CHARS = CHUNK_SIZE_TOKENS * 4;  // 1920 chars
+export const CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * 4;  // 288 chars
 // Search window for finding optimal break points (in tokens, ~200 tokens)
 export const CHUNK_WINDOW_TOKENS = 200;
 export const CHUNK_WINDOW_CHARS = CHUNK_WINDOW_TOKENS * 4;  // 800 chars
@@ -1222,7 +1227,8 @@ function ensureVecTableInternal(db: Database, dimensions: number): void {
     if (existingDims !== null && existingDims !== dimensions) {
       throw new Error(
         `Embedding dimension mismatch: existing vectors are ${existingDims}d but the current model produces ${dimensions}d. ` +
-        `Run 'qmd embed -f' to re-embed with the new model.`
+        `The vector index is shared across collections, so a model change needs a full re-embed: ` +
+        `run 'qmd embed -f' (without -c).`
       );
     }
     db.exec("DROP TABLE IF EXISTS vectors_vec");

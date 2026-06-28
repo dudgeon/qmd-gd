@@ -1,0 +1,28 @@
+Vendored embedding model
+=========================
+
+File:        bge-small-en-v1.5-Q8_0.gguf
+Model:       BAAI/bge-small-en-v1.5 (BERT, 384-dim, 512-token context)
+Quantization: Q8_0 GGUF
+Source:      https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF
+             (resolve/main/bge-small-en-v1.5-q8_0.gguf)
+SHA-256:     f046db1dc724cf4f6f0a0c5917e922823b73eb1d27b8f9a9c2797f7866974804
+License:     MIT (BAAI/bge-small-en-v1.5)
+
+Why this file is committed to the repo
+--------------------------------------
+qmd-gd vendors this model so a fresh clone can embed with no network access —
+required for environments where huggingface.co is unreachable (e.g. behind a
+corporate proxy). It is the default embedding model, referenced internally by
+the stable identity "bundled:bge-small-en-v1.5-Q8_0.gguf".
+
+Override with QMD_EMBED_MODEL=<absolute path to a .gguf> or an hf:<user>/<repo>/<file>
+URI to use a different model.
+
+Attribution
+-----------
+BAAI/bge-small-en-v1.5 is released by the Beijing Academy of Artificial
+Intelligence under the MIT License. The GGUF conversion is published by the
+ggml-org organization on HuggingFace. This redistribution is permitted under
+the MIT License; see https://huggingface.co/BAAI/bge-small-en-v1.5 for the
+upstream model card and license.

@@ -11,6 +11,46 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 
 ### Changes
 
+- **Default embedding model is now vendored in-repo — no network needed to embed.**
+  Switched the default from `hf:ggml-org/embeddinggemma-300M-GGUF` (768-dim, Gemma
+  license, downloaded from HuggingFace) to **bge-small-en-v1.5** (BAAI, MIT, 384-dim),
+  committed under `models/bge-small-en-v1.5-Q8_0.gguf` (~35 MB) and referenced by the
+  stable identity `bundled:bge-small-en-v1.5-Q8_0.gguf`. A fresh clone embeds with zero
+  HuggingFace access — required behind proxies that block `huggingface.co`. `QMD_EMBED_MODEL=<abs path>`
+  and `hf:` URIs still override. Added a bge prompt family (query instruction +
+  bare-text passages) in `formatQueryForEmbedding`/`formatDocForEmbedding`.
+  **Migration:** existing indexes were embedded at 768-dim with embeddinggemma; switching
+  forces a full re-embed — `qmd embed -f` run **globally (without `-c`)**, since the vector
+  index is shared across collections — because dimensions differ (the vec table guards this
+  with a clear dimension-mismatch error). Users who pinned `models.embed` in their
+  config keep their pin until they clear/repoint it.
+- **Chunk size lowered to 480 tokens (from 900)** so whole chunks fit bge's 512-token
+  context — no embed-time truncation (verified: the `⚠ truncated to fit embedding context`
+  warnings are gone). Chunk size is part of the embedding fingerprint, so this reinforces the
+  one-time re-embed. (`src/store.ts`)
+- **Works behind a TLS-intercepting / corporate proxy.** The `bin/qmd` launcher now resolves
+  a CA bundle (`QMD_CA_BUNDLE` › `NODE_EXTRA_CA_CERTS` › `SSL_CERT_FILE`) and sets
+  `NODE_EXTRA_CA_CERTS` on the child process before it spawns — so both qmd's own `fetch` and
+  node-llama-cpp's downloader (`ipull`) trust the proxy, with no re-exec. A launcher-level
+  `--insecure-tls` flag disables verification for a single run (consumed before the CLI, with
+  a warning). `qmd doctor` now reports `NODE_EXTRA_CA_CERTS` / `QMD_CA_BUNDLE` / `SSL_CERT_FILE`
+  / `NODE_TLS_REJECT_UNAUTHORIZED` / `HTTP(S)_PROXY`. No org-specific paths are baked into the
+  repo — the user (or the agent, which knows the environment) supplies `QMD_CA_BUNDLE`.
+- **One-shot installer: `scripts/install.sh`.** Detects a proxy + CA bundle and exports
+  `NODE_EXTRA_CA_CERTS`, then runs `npm install` → `npm run build` → `npm link` →
+  `qmd skill install --global --yes`. A scoped `--insecure-tls` retries only `npm install`
+  with verification off if certs still fail. No model download (vendored). `--yes` /
+  `--dry-run` supported; added to `package.json` `files[]`.
+- **Deepened the setup preflight** (`preflight-deps.sh`): inspects response **bodies** (an
+  HTML 403 block page is no longer reported as "reachable"), probes the GitHub release CDN
+  (`objects.githubusercontent.com`) and `nodejs.org` headers (not just `github.com`), and runs
+  a one-line **Node `fetch`** probe that surfaces `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (which a
+  curl-only check misses, since curl and Node use different trust stores). HuggingFace is only
+  checked when a non-default `hf:` model is configured.
+- **Realigned the `qmd-setup` skill** to lead with `bash scripts/install.sh` (one command
+  instead of nine), use `qmd skill install --global --yes`, prompt the agent to supply the
+  corporate CA bundle path, and drop the (now unnecessary) model-download step. Removed an
+  org-specific domain reference from the skill's network rule.
 - **Removed the MCP server.** `qmd mcp` (stdio + HTTP) and the
   `@modelcontextprotocol/sdk` dependency are gone; the CLI plus the bundled skill are
   the only interface. (ADR 0003)
@@ -41,9 +81,9 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   Duo flow on the main agent), so an expensive Opus session offloads the mechanical work.
   `qmd skill install --global` now also symlinks it into `~/.claude/agents/`. (ADR 0007)
 - Hardened the `qmd-setup` skill for restricted-egress networks: the agent must never
-  contact an external domain (only `capitalone.com`/`github.com` are reachable by the
-  agent). The network preflight (`preflight-deps.sh`, which `curl`s npm/HuggingFace) is
-  now explicitly **user-run** — the agent hands it over and reads back the pasted output.
+  contact an external domain (only an allowlisted set is reachable by the agent). The
+  network preflight (`preflight-deps.sh`, which `curl`s the npm registry / prebuilt hosts)
+  is now explicitly **user-run** — the agent hands it over and reads back the pasted output.
   The local read-only probe (`qmd-setup-context.sh`) stays agent-runnable (no network).
 - **Unbundled the Claude Code plugin → plain skills folder.** Removed
   `.claude-plugin/marketplace.json` and moved the skills from `skills/` to **`.claude/skills/`**
