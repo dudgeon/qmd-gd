@@ -52,6 +52,7 @@ import {
   insertContent,
   insertDocument,
   generateEmbeddings,
+  clearAllEmbeddings,
   getHybridRrfWeights,
   _resetProductionModeForTesting,
   hybridQuery,
@@ -284,6 +285,49 @@ afterAll(async () => {
 // =============================================================================
 // Store Creation Tests
 // =============================================================================
+
+describe("Vector table migration on dimension change", () => {
+  test("ensureVecTable rejects a dimension change; a global clear lets the re-embed recreate it", async () => {
+    const store = await createTestStore();
+    try {
+      // Simulate an existing index embedded at 768 dims (embeddinggemma).
+      store.ensureVecTable(768);
+      // Swapping to a 384-dim model (bge) must fail loudly, not silently corrupt the index,
+      // and must steer the user to a GLOBAL re-embed because the vec table is shared.
+      expect(() => store.ensureVecTable(384)).toThrow(/dimension mismatch/i);
+      expect(() => store.ensureVecTable(384)).toThrow(/qmd embed -f.*without -c/i);
+
+      // `qmd embed -f` (no collection) drops the shared vec table...
+      clearAllEmbeddings(store.db);
+      // ...so the re-embed recreates it at the new dimension without error.
+      expect(() => store.ensureVecTable(384)).not.toThrow();
+    } finally {
+      await cleanupTestDb(store);
+    }
+  });
+
+  test("a collection-scoped clear keeps the shared vec table while other collections hold vectors", async () => {
+    // This is why the dimension-mismatch error steers users to a GLOBAL re-embed: a
+    // per-collection clear only drops the shared table once content_vectors is fully
+    // empty, so with multiple collections it stays at the old dimension.
+    const store = await createTestStore();
+    try {
+      store.ensureVecTable(768);
+      const now = new Date().toISOString();
+      const ins = store.db.prepare(
+        `INSERT INTO content_vectors (hash, seq, pos, model, embedded_at) VALUES (?, 0, 0, 'test', ?)`
+      );
+      ins.run("keepme", now); // a vector from some other collection that the scoped clear won't touch
+      clearAllEmbeddings(store.db, "target-collection");
+      const exists = store.db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='vectors_vec'`)
+        .get();
+      expect(exists, "shared vec table should survive while other vectors remain").toBeTruthy();
+    } finally {
+      await cleanupTestDb(store);
+    }
+  });
+});
 
 describe("Store Creation", () => {
   test("createStore throws without explicit path in test mode", () => {

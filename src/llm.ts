@@ -70,7 +70,7 @@ export async function withNativeStdoutRedirectedToStderr<T>(fn: () => Promise<T>
 }
 
 import { homedir } from "os";
-import { join, dirname, resolve } from "path";
+import { join, dirname, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import { existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
 
@@ -92,7 +92,10 @@ export function isQwen3EmbeddingModel(modelUri: string): boolean {
  * passages — distinct from both the Qwen3 and nomic/embeddinggemma styles.
  */
 export function isBgeEmbeddingModel(modelUri: string): boolean {
-  return /bge|baai/i.test(modelUri);
+  // Anchor to a model-name token so an incidental "bge"/"baai" substring in a
+  // directory path does NOT misfire — e.g. /Users/bgevans/embeddinggemma.gguf or
+  // /opt/abge/qwen-embed.gguf must classify as their real family, not bge.
+  return /(^|[/:_-])bge[-_]/i.test(modelUri) || /(^|[/:_-])baai([/:_-]|$)/i.test(modelUri);
 }
 
 /**
@@ -222,7 +225,9 @@ export const DEFAULT_EMBED_MODEL_URI = DEFAULT_EMBED_MODEL;
  */
 export function resolveBundledModelPath(model: string): string | null {
   if (!model.startsWith("bundled:")) return null;
-  return join(BUNDLED_MODEL_DIR, model.slice("bundled:".length));
+  // basename() neutralizes any path separators / "..": bundled models are flat
+  // files directly under models/, so a "bundled:../../etc/x" can never escape it.
+  return join(BUNDLED_MODEL_DIR, basename(model.slice("bundled:".length)));
 }
 
 export type ModelResolutionConfig = {

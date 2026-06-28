@@ -58,9 +58,18 @@ if (process.platform === "darwin" && process.env.QMD_METAL_KEEP_RESIDENCY !== "1
 //
 // `--insecure-tls` is a launcher-level escape hatch (consumed here, never
 // forwarded to the CLI) that disables TLS verification for this invocation only.
+// Consume `--insecure-tls` wherever it appears as an option (so `qmd pull --insecure-tls`
+// and `qmd --insecure-tls pull` both work), but stop at a `--` end-of-options marker so a
+// literal value can still be passed through, e.g. `qmd search -- --insecure-tls`.
 const rawArgs = process.argv.slice(2);
-const insecureTls = rawArgs.includes("--insecure-tls");
-const forwardArgs = rawArgs.filter((a) => a !== "--insecure-tls");
+let insecureTls = false;
+let endOfOptions = false;
+const forwardArgs = [];
+for (const a of rawArgs) {
+  if (!endOfOptions && a === "--") endOfOptions = true;
+  else if (!endOfOptions && a === "--insecure-tls") { insecureTls = true; continue; }
+  forwardArgs.push(a);
+}
 
 const childEnv = { ...process.env };
 if (!childEnv.NODE_EXTRA_CA_CERTS) {

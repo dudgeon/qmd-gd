@@ -448,22 +448,24 @@ judge.
 
 ### GGUF Model (via node-llama-cpp)
 
-qmd-gd uses **one** local GGUF model — the embedding model — auto-downloaded on first use:
+qmd-gd uses **one** local GGUF model — the embedding model — which ships **in the repo**:
 
 | Model | Purpose | Size |
 |-------|---------|------|
-| `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~300MB |
+| `bge-small-en-v1.5-Q8_0` (BAAI, MIT) | Vector embeddings (default) | ~35MB, vendored |
 
-It is downloaded from HuggingFace and cached in `~/.cache/qmd/models/`. (Upstream qmd
-also ran a `qwen3-reranker` and a `qmd-query-expansion` model; qmd-gd delegates those
-steps to the calling agent, so they are **never downloaded** — see
+It is committed at `models/bge-small-en-v1.5-Q8_0.gguf` and referenced by the stable
+identity `bundled:bge-small-en-v1.5-Q8_0.gguf`, so a fresh clone embeds with **no network**
+— no HuggingFace access required (it works where `huggingface.co` is blocked). (Upstream qmd
+also ran a `qwen3-reranker` and a `qmd-query-expansion` model; qmd-gd delegates those steps
+to the calling agent, so they are **never downloaded** — see
 [ADR 0002](docs/adr/0002-delegate-generative-steps-to-the-agent.md).)
 
 ### Custom Embedding Model
 
 Override the default embedding model via the `QMD_EMBED_MODEL` environment variable.
-This is useful for multilingual corpora (e.g. Chinese, Japanese, Korean) where
-`embeddinggemma-300M` has limited coverage.
+This is useful for multilingual corpora (e.g. Chinese, Japanese, Korean) where the
+English-only default `bge-small-en-v1.5` has no coverage.
 
 ```sh
 # Use Qwen3-Embedding-0.6B for better multilingual (CJK) support
@@ -474,12 +476,14 @@ qmd embed -f
 ```
 
 Supported model families:
-- **embeddinggemma** (default) — English-optimized, small footprint
+- **bge** (default) — `bge-small-en-v1.5`, English, MIT-licensed, vendored in-repo (384-dim)
+- **embeddinggemma** — English-optimized (the previous default; downloads from HuggingFace, 768-dim)
 - **Qwen3-Embedding** — Multilingual (119 languages including CJK), MTEB top-ranked
 
-> **Note:** When switching embedding models, you must re-index with `qmd embed -f`
-> since vectors are not cross-compatible between models. The prompt format is
-> automatically adjusted for each model family.
+> **Note:** When switching embedding models, you must re-index with `qmd embed -f` —
+> run it **globally, without `-c`** (the vector index is shared across collections, so a
+> dimension change can't be rebuilt per-collection). Vectors are not cross-compatible
+> between models; the prompt format is adjusted automatically for each model family.
 
 ## Installation
 
@@ -604,11 +608,12 @@ global_context: "Knowledge base for my projects"
 # Overridden by the QMD_EDITOR_URI env var. See "Editor Links" below.
 editor_uri: "vscode://file{path}:{line}:{col}"
 
-# Override the default embedding GGUF model. Optional — omit to use the
-# built-in default. See "Model Configuration" for the default URI. (qmd-gd runs
-# only the embedding model; any `rerank`/`generate` entries are ignored.)
+# Override the embedding model. Optional — omit to use the vendored default
+# (bundled:bge-small-en-v1.5-Q8_0.gguf). Set a HuggingFace URI or an absolute path
+# to a local .gguf. (qmd-gd runs only the embedding model; any `rerank`/`generate`
+# entries are ignored.)
 models:
-  embed: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
+  embed: "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
 
 # One entry per collection. The key is the collection name.
 collections:
@@ -629,7 +634,7 @@ collections:
 |-----|-------|---------|
 | `global_context` | top-level | Context prepended for every collection. Set via `qmd context add /`. |
 | `editor_uri` (alias `editor_uri_template`) | top-level | Hyperlink template for clickable result paths; `QMD_EDITOR_URI` overrides. |
-| `models.embed` | top-level | HuggingFace GGUF URI (`hf:<user>/<repo>/<file>`) overriding the built-in embedding model. (Any `rerank`/`generate` keys are ignored by qmd-gd.) |
+| `models.embed` | top-level | Override the built-in default (`bundled:bge-small-en-v1.5-Q8_0.gguf`) with a HuggingFace GGUF URI (`hf:<user>/<repo>/<file>`) or an absolute path to a local `.gguf`. (Any `rerank`/`generate` keys are ignored by qmd-gd.) |
 | `collections.<name>.path` | per-collection | Absolute directory to index. |
 | `collections.<name>.pattern` | per-collection | Glob mask. Set via `qmd collection add --mask`. Default `**/*.md`. |
 | `collections.<name>.ignore` | per-collection | Glob patterns excluded from indexing — useful to stop nested collections double-indexing. **YAML-only — no CLI command sets this.** Additive with QMD's built-in exclusions (`node_modules`, `.git`, `.cache`, `vendor`, `dist`, `build`), which you cannot un-ignore. |
@@ -1093,25 +1098,39 @@ Sub-queries ──► [lex, vec, hyde, …]   (authored by the agent)
 
 ## Model Configuration
 
-qmd-gd runs a single local model — the embedding model — defined in `src/llm.ts` as
-a HuggingFace URI:
+qmd-gd runs a single local model — the embedding model — defined in `src/llm.ts`. The
+default is **vendored in the repo** (no download) and referenced by a stable identity:
 
 ```typescript
-const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+const DEFAULT_EMBED_MODEL = "bundled:bge-small-en-v1.5-Q8_0.gguf";
 ```
 
-Override it without touching source via the `models.embed` key in `index.yml`
-(see [Configuring `index.yml`](#configuring-indexyml)) or the `QMD_EMBED_MODEL`
-env var. Re-run `qmd embed` after changing the embedding model.
+The `bundled:` scheme resolves to `models/<file>` inside the package at load time. Override
+it without touching source via the `models.embed` key in `index.yml` (see
+[Configuring `index.yml`](#configuring-indexyml)) or the `QMD_EMBED_MODEL` env var — set an
+absolute path to a local `.gguf` or an `hf:<user>/<repo>/<file>` URI. Re-run `qmd embed -f`
+(globally, without `-c`) after changing the embedding model.
 
-### EmbeddingGemma Prompt Format
+**Updating the vendored model:** replace `models/bge-small-en-v1.5-Q8_0.gguf`, update
+`DEFAULT_EMBED_MODEL` and the file's `models/NOTICE`, then re-embed. The weights live in git
+history, so swapping the file grows the repo — keep it small (< 50 MiB to commit cleanly).
+
+### Prompt formats per family
+
+The query/passage prompt is selected automatically from the model URI:
 
 ```
-// For queries
-"task: search result | query: {query}"
+// bge (default)
+query:   "Represent this sentence for searching relevant passages: {query}"
+passage: "{title}\n{content}"            // bare text, no prefix
 
-// For documents
-"title: {title} | text: {content}"
+// embeddinggemma / nomic
+query:   "task: search result | query: {query}"
+passage: "title: {title} | text: {content}"
+
+// Qwen3-Embedding
+query:   "Instruct: Retrieve relevant documents for the given query\nQuery: {query}"
+passage: "{title}\n{content}"
 ```
 
 ## License

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync, existsSync, openSync, readSync, closeSync } from "node:fs";
+import { readFileSync, existsSync, openSync, readSync, closeSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_EMBED_MODEL_URI, resolveBundledModelPath } from "../src/llm";
 
 const root = new URL("..", import.meta.url);
@@ -62,6 +64,26 @@ describe("published package files", () => {
     } finally {
       closeSync(fd);
     }
+  });
+
+  test("install.sh + preflight are valid bash, executable, and carry the proxy/TLS guards", () => {
+    for (const rel of ["scripts/install.sh", ".claude/skills/qmd-setup/scripts/preflight-deps.sh"]) {
+      const path = fileURLToPath(new URL(rel, root));
+      // `bash -n` parses without executing — throws on a syntax error.
+      expect(() => execFileSync("bash", ["-n", path]), `${rel} should parse`).not.toThrow();
+      expect(statSync(path).mode & 0o111, `${rel} should be executable`).not.toBe(0);
+    }
+
+    const install = readFileSync(new URL("scripts/install.sh", root), "utf8");
+    expect(install).toContain("NODE_EXTRA_CA_CERTS");
+    expect(install).toContain("QMD_CA_BUNDLE");
+    expect(install).toContain("NODE_TLS_REJECT_UNAUTHORIZED=0"); // scoped insecure fallback
+    expect(install).toContain("qmd skill install --global --yes");
+
+    const preflight = readFileSync(new URL(".claude/skills/qmd-setup/scripts/preflight-deps.sh", root), "utf8");
+    expect(preflight).toContain("node_tls_probe");               // Node trust-store probe, not just curl
+    expect(preflight).toContain("objects.githubusercontent.com"); // release CDN, not just github.com
+    expect(preflight).toContain("UNABLE_TO_GET_ISSUER_CERT");
   });
 
   test("publishes the qmd skill with the expected structure", () => {

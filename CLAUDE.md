@@ -168,9 +168,9 @@ npx vitest run --reporter=verbose test/
 
 - SQLite FTS5 for full-text search (BM25)
 - sqlite-vec for vector similarity search
-- node-llama-cpp for **embeddings only** (embeddinggemma). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
+- node-llama-cpp for **embeddings only** (default: bge-small-en-v1.5, MIT, vendored in-repo under `models/` and referenced as `bundled:bge-small-en-v1.5-Q8_0.gguf`). qmd-gd runs no local generative models — query expansion and reranking are delegated to the calling Claude agent (see docs/adr/0002).
 - Reciprocal Rank Fusion (RRF) for combining results
-- Chunking is regex/markdown-only: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries. There is no AST/code-aware chunking.
+- Chunking is regex/markdown-only: 480 tokens/chunk with 15% overlap (sized to fit bge-small's 512-token context), prefers markdown headings as boundaries. There is no AST/code-aware chunking.
 
 ## Important: Do NOT run automatically
 

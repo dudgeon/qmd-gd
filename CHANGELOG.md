@@ -20,8 +20,9 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   and `hf:` URIs still override. Added a bge prompt family (query instruction +
   bare-text passages) in `formatQueryForEmbedding`/`formatDocForEmbedding`.
   **Migration:** existing indexes were embedded at 768-dim with embeddinggemma; switching
-  forces a full re-embed (`qmd embed -f`) because dimensions differ (the vec table guards
-  this with a clear dimension-mismatch error). Users who pinned `models.embed` in their
+  forces a full re-embed — `qmd embed -f` run **globally (without `-c`)**, since the vector
+  index is shared across collections — because dimensions differ (the vec table guards this
+  with a clear dimension-mismatch error). Users who pinned `models.embed` in their
   config keep their pin until they clear/repoint it.
 - **Chunk size lowered to 480 tokens (from 900)** so whole chunks fit bge's 512-token
   context — no embed-time truncation (verified: the `⚠ truncated to fit embedding context`
