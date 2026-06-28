@@ -80,6 +80,24 @@ passes — only then install. The knobs:
 Persist whatever you set (shell profile / `~/.npmrc`) so install, `qmd embed`, and the
 scheduled refresh use the same settings. The native functional check passes once `qmd` is installed.
 
+**Sourcing org-specific endpoints — read first, ask second, persist locally.** The repo and
+this skill carry **zero** internal URLs or paths on purpose, so any org-specific value is
+discovered at setup time, never committed:
+
+1. **Read first.** The value may already be on the machine — `~/.npmrc` /
+   `NPM_CONFIG_REGISTRY` for the registry; `QMD_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` /
+   `SSL_CERT_FILE` for the CA bundle; or a path the user's own `~/.claude/CLAUDE.md`
+   documents. If you (the agent) already know it from `~/.claude`, supply it.
+2. **Ask second.** If a check is still `[default]` / `[FAIL]`, ask the user for **only** the
+   one value it needs (their internal npm registry URL, or their corporate CA `.pem` path) —
+   don't guess and don't invent an org URL.
+3. **Persist locally**, where future runs pick it up automatically — **never in the repo:**
+   `npm config set registry <url>` (writes `~/.npmrc`) and `export QMD_CA_BUNDLE=…` in the
+   shell profile. Then re-run the preflight until it passes.
+
+This keeps the skill org-agnostic: the same steps work at any company because the specifics
+live on the user's machine, not in qmd-gd.
+
 ### 1. Install — one command (build, link, skills)
 
 The bundled installer collapses build + link + skill-install into one command and handles
