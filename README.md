@@ -12,11 +12,21 @@ qmd-gd is a **skills folder**, not a Claude Code plugin — there is nothing to 
 Claude Code.
 
 1. On GitHub, click **Code → Download ZIP** and unzip it somewhere stable (e.g. `~/repos/qmd-gd`).
+   **No `git` needed** — the ZIP carries everything, including the embedding model.
 2. Open a terminal in that folder and start Claude Code (`claude`).
 3. Say **"help me get set up"** (or run `/qmd-setup`). The bundled `qmd-setup` skill —
    auto-discovered because you opened this folder — walks you through building the CLI, adding
    folders to search, indexing, embedding, and (optionally) scheduling refresh. It prints each
-   command for *you* to run; it never installs or downloads anything itself.
+   command for *you* to run (it never installs or downloads anything itself); the one-shot
+   `bash scripts/install.sh` covers build + link + skills in a single step.
+
+**Works offline / on locked-down machines.** The embedding model ships **inside the download**
+(`models/bge-small-en-v1.5-Q8_0.gguf`, MIT-licensed), so indexing needs **no HuggingFace access**.
+
+**Behind a TLS-intercepting corporate proxy?** When setup hits a certificate error
+(`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`), the skill asks for your corporate CA bundle (`.pem`) path
+and wires it in via `QMD_CA_BUNDLE` (no org-specific paths are ever stored in the repo). See
+[Corporate proxy / TLS](#corporate-proxy--tls).
 
 > Why it just works: the `qmd` and `qmd-setup` skills live under `.claude/skills/` in the repo,
 > which Claude Code auto-discovers when opened here. To use the `qmd` and `ask-qmd` skills from your
@@ -28,7 +38,7 @@ Claude Code.
 # qmd-gd is a skills folder — clone OR download the repo ZIP from GitHub, then build.
 # Runs on Node (>=20). Non-developers: see "Get started" above and just say "help me get set up".
 git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd   # or: download the ZIP from GitHub and unzip
-npm install && npm run build && npm link   # exposes `qmd` globally
+bash scripts/install.sh                     # build + link + skills (or: npm install && npm run build && npm link)
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -487,15 +497,36 @@ Supported model families:
 
 ## Installation
 
-qmd-gd is a private fork installed from the checkout (not published to npm). It runs on
-**Node (>=20)**.
+qmd-gd is a private fork (not published to npm). It runs on **Node (>=20)**, and the
+embedding model is **vendored in the repo**, so setup needs no HuggingFace access.
+
+> **Most users don't run these by hand** — see
+> [Get started](#get-started-recommended-for-non-developers) and just ask Claude to set it up.
+> The steps below are the manual equivalent; for proxy/CA details see
+> [Corporate proxy / TLS](#corporate-proxy--tls).
+
+**1. Get the code** — download the ZIP from GitHub and unzip it (no `git` required), or clone:
 
 ```sh
-git clone https://github.com/dudgeon/qmd-gd
-cd qmd-gd
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
+# …or download the ZIP, unzip, and `cd` into the folder
+```
+
+**2. Set it up** — open the folder in Claude Code and ask it to *"set up qmd"* (the bundled
+`qmd-setup` skill walks you through it), or run the one-shot installer yourself:
+
+```sh
+bash scripts/install.sh                                    # build + link + install skills
+QMD_CA_BUNDLE=/path/to/corp-ca.pem bash scripts/install.sh # behind a TLS-intercepting proxy
+```
+
+Equivalent manual steps:
+
+```sh
 npm install      # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
 npm run build    # compiles dist/ via tsc
 npm link         # or: npm i -g .
+qmd skill install --global --yes
 ```
 
 After a Node major-version upgrade, run `npm rebuild` so the native modules match the new ABI.
@@ -505,6 +536,32 @@ After a Node major-version upgrade, run `npm rebuild` so the native modules matc
 ```sh
 npx tsx src/cli/qmd.ts <command>   # run from source
 ```
+
+## Corporate proxy / TLS
+
+qmd-gd is built to install and run behind a **TLS-intercepting corporate proxy** that blocks
+HuggingFace and breaks Node's certificate trust store. **Nothing organization-specific is stored
+in the repo** — you supply the local specifics and they stay on your machine (the `qmd-setup`
+skill reads them from your environment or asks you, then persists them locally).
+
+- **Embedding model** — vendored in `models/`, so `qmd embed` makes **no network call** on the
+  default model. (HuggingFace is only used if you override `QMD_EMBED_MODEL` with an `hf:` URI.)
+- **CA bundle** — point Node at your corporate root CA so `npm install` and qmd's own fetches
+  trust the proxy:
+  ```sh
+  export QMD_CA_BUNDLE=/path/to/corp-ca.pem   # qmd's launcher feeds this to Node as NODE_EXTRA_CA_CERTS
+  bash scripts/install.sh                       # picks up QMD_CA_BUNDLE automatically
+  ```
+  Persist `export QMD_CA_BUNDLE=…` in your shell profile so `qmd embed` and scheduled refreshes
+  keep working. `qmd doctor` reports the CA/proxy environment it sees.
+- **Last-resort fallback** — if a chain still won't verify, `qmd --insecure-tls <cmd>` (or
+  `bash scripts/install.sh --insecure-tls`) disables verification for that one run. Insecure —
+  prefer the CA bundle.
+- **npm registry** — if your org mirrors npm, set it on your machine
+  (`npm config set registry <internal-npm-registry-url>`); the repo never hardcodes a registry URL.
+- **Preflight** — `bash .claude/skills/qmd-setup/scripts/preflight-deps.sh` checks the npm
+  registry, the prebuilt CDNs, and **Node's TLS trust store** (which a `curl`-only check can't
+  see), and flags an HTML proxy-block page instead of reporting it as reachable.
 
 ## Usage
 

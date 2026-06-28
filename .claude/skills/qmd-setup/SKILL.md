@@ -102,8 +102,8 @@ live on the user's machine, not in qmd-gd.
 
 The bundled installer collapses build + link + skill-install into one command and handles
 corporate-proxy TLS. **You (the agent) print it; the user runs it** — by rule 1 the agent
-never runs `npm install` itself. From the **stable** checkout (e.g. `~/repos/qmd-gd`, not a
-worktree); qmd-gd runs on **Node (>=20)**:
+never runs `npm install` itself. Run it from the unzipped **qmd-gd** folder (a stable
+location — not a throwaway worktree); qmd-gd runs on **Node (>=20)**:
 
 ```bash
 bash scripts/install.sh --yes
