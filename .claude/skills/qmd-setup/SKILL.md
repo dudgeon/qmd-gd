@@ -71,7 +71,8 @@ passes — only then install. The knobs:
   `export NODE_EXTRA_CA_CERTS="$QMD_CA_BUNDLE"` for `npm install`). `scripts/install.sh` does
   this automatically when `QMD_CA_BUNDLE` is set.
 - **npm registry** → `npm config set registry <url>` (or `~/.npmrc` `registry=`, or
-  `NPM_CONFIG_REGISTRY`) — usually the org's Artifactory npm virtual repo.
+  `NPM_CONFIG_REGISTRY`) — usually an internal/mirror npm registry. Read it from the user's
+  environment; never hardcode an org-specific URL in the repo or skill.
 - **native prebuilts** → if the GitHub release CDN is blocked, either set
   `npm config set better_sqlite3_binary_host_mirror <url>` or build from source
   (`npm install --build-from-source`; node-llama-cpp needs cmake + a C/C++ toolchain).

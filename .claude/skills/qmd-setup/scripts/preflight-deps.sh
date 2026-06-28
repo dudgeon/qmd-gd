@@ -92,7 +92,7 @@ CODE="$(http_status "$REG")"
 case "$CODE" in
   2*|3*|401|403) ok "reachable (HTTP $CODE).";;
   *) bad "unreachable (HTTP $CODE) — npm install will fail."
-     detail "Set your internal registry:  npm config set registry <artifactory-npm-url>";;
+     detail "Set your internal registry:  npm config set registry <internal-npm-registry-url>";;
 esac
 
 # ── 2) native prebuilt hosts (NOT the npm registry) ─────────────────────────
