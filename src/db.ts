@@ -1,29 +1,72 @@
 /**
- * db.ts - SQLite access layer (Node + better-sqlite3)
+ * db.ts - SQLite access layer (Node's built-in node:sqlite + sqlite-vec)
  *
- * Provides a unified Database export backed by better-sqlite3. sqlite-vec is
- * loaded as a native loadable extension for vector similarity search.
+ * qmd-gd uses Node's BUILT-IN SQLite (`node:sqlite`, Node >= 22.13) instead of a
+ * native addon, so there is nothing to compile at install time and nothing to
+ * rebuild when Node changes — the engine ships with Node. sqlite-vec is loaded as
+ * a prebuilt loadable extension (a `.dylib`/`.so`/`.dll`, not a Node addon, so it
+ * is Node-version-independent) for vector similarity search.
+ *
+ * The Database/Statement interfaces below are the subset of the better-sqlite3 API
+ * the rest of QMD was written against; the adapters map them onto node:sqlite's
+ * DatabaseSync/StatementSync so the ~118 call sites are untouched.
  */
 
 export type SQLiteValue = string | number | bigint | Buffer | Uint8Array | Float32Array | null;
 export type SQLiteParams = readonly SQLiteValue[];
 
-type DatabaseConstructor = new (path: string) => Database;
-type LoadableSqliteDatabase = Pick<Database, "loadExtension">;
+// Suppress ONLY the informational node:sqlite ExperimentalWarning, at its source.
+// Node emits it through process.emitWarning when the module loads. bin/qmd passes
+// --disable-warning, but direct `node`/`tsx` entry points (the test harness, the
+// store worker) bypass that launcher and would otherwise leak it to stderr. Filtering
+// here covers every entry path and forwards all other warnings untouched.
+{
+  const original = process.emitWarning.bind(process);
+  const filtered = (warning: unknown, ...rest: unknown[]): void => {
+    const opt = rest[0];
+    const type = typeof opt === "string" ? opt : (opt as { type?: string } | undefined)?.type;
+    const name = warning instanceof Error ? warning.name : type;
+    const message = warning instanceof Error ? warning.message : String(warning ?? "");
+    if (name === "ExperimentalWarning" && /\bSQLite\b/i.test(message)) return;
+    (original as (...a: unknown[]) => void)(warning, ...rest);
+  };
+  process.emitWarning = filtered as typeof process.emitWarning;
+}
 
-let _Database: DatabaseConstructor;
-let _sqliteVecLoad: ((db: LoadableSqliteDatabase) => void) | null;
+// Load node:sqlite lazily so an unsupported Node yields a clear, actionable error
+// instead of a cryptic "Cannot find module 'node:sqlite'".
+const nodeSqlite = await (async () => {
+  try {
+    return await import("node:sqlite");
+  } catch (err) {
+    throw new Error(
+      `qmd requires Node's built-in SQLite (node:sqlite), available in Node >= 22.13. ` +
+        `You are running ${process.version}. Upgrade Node (e.g. the latest LTS) and retry.\n` +
+        `(${(err as Error)?.message ?? String(err)})`
+    );
+  }
+})();
+const DatabaseSyncCtor = nodeSqlite.DatabaseSync;
+type RawDatabase = InstanceType<typeof nodeSqlite.DatabaseSync>;
+type RawStatement = ReturnType<RawDatabase["prepare"]>;
 
-_Database = (await import("better-sqlite3")).default as unknown as DatabaseConstructor;
-const sqliteVec = await import("sqlite-vec");
-_sqliteVecLoad = (db: LoadableSqliteDatabase) => sqliteVec.load(db as Parameters<typeof sqliteVec.load>[0]);
+let _sqliteVecLoad: ((db: { loadExtension(path: string): void }) => void) | null = null;
+try {
+  const sqliteVec = await import("sqlite-vec");
+  _sqliteVecLoad = (db) => sqliteVec.load(db as Parameters<typeof sqliteVec.load>[0]);
+} catch {
+  _sqliteVecLoad = null;
+}
 
 function isBusyError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  const code = (err as { code?: unknown }).code;
-  if (code === "SQLITE_BUSY" || code === "SQLITE_BUSY_SNAPSHOT") return true;
-  const message = (err as { message?: unknown }).message;
-  return typeof message === "string" && /database is locked|database is busy|SQLITE_BUSY/i.test(message);
+  const e = err as { code?: unknown; errcode?: unknown; message?: unknown };
+  // node:sqlite surfaces SQLite result codes numerically: SQLITE_BUSY = 5,
+  // SQLITE_BUSY_SNAPSHOT = 517. (better-sqlite3 used string codes like "SQLITE_BUSY".)
+  if (e.errcode === 5 || e.errcode === 517) return true;
+  if (e.code === "SQLITE_BUSY" || e.code === "SQLITE_BUSY_SNAPSHOT") return true;
+  const message = typeof e.message === "string" ? e.message : "";
+  return /database is locked|database is busy|SQLITE_BUSY/i.test(message);
 }
 
 function sleepSync(ms: number): void {
@@ -51,34 +94,6 @@ function enableWal(db: Database, budgetMs: number): void {
 }
 
 /**
- * Open a SQLite database (better-sqlite3).
- *
- * better-sqlite3 defaults `busy_timeout` to 0, so concurrent writers throw
- * `SQLITE_BUSY` instead of waiting. WAL improves read-while-write concurrency
- * but does not serialise writers. Setting the timeout at connection open makes
- * parallel processes (e.g. an `update` or `query` racing a long `embed`, or a
- * first-open schema migration racing any routine command) queue at batch
- * boundaries instead of failing on contact.
- *
- * WAL is enabled here too (with a bounded retry) so connection-level pragmas
- * live in one place and the cold-database journal migration survives concurrent
- * opens.
- *
- * Default 120_000 ms outlasts the worst-case batch commit on a multi-GB
- * index. Override with `QMD_SQLITE_BUSY_TIMEOUT` (value in milliseconds; `0`
- * restores the upstream fail-fast behaviour).
- */
-export function openDatabase(path: string): Database {
-  const db = new _Database(path) as Database;
-  const raw = process.env.QMD_SQLITE_BUSY_TIMEOUT;
-  const parsed = raw !== undefined && raw !== "" ? Number(raw) : Number.NaN;
-  const busyTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
-  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
-  enableWal(db, busyTimeoutMs);
-  return db;
-}
-
-/**
  * Common subset of the Database interface used throughout QMD.
  */
 export interface Database {
@@ -94,6 +109,104 @@ export interface Statement {
   get<T = unknown>(...params: SQLiteValue[]): T | undefined;
   all<T = unknown>(...params: SQLiteValue[]): T[];
   iterate<T = unknown>(...params: SQLiteValue[]): IterableIterator<T>;
+}
+
+/** Adapts a node:sqlite StatementSync to QMD's Statement interface. */
+class NodeSqliteStatement implements Statement {
+  constructor(private readonly stmt: RawStatement) {}
+  run(...params: SQLiteValue[]): { changes: number; lastInsertRowid: number | bigint } {
+    // node:sqlite's param type omits Float32Array, but accepts it at runtime as a
+    // blob (qmd binds embedding vectors this way), so cast through the type gap.
+    const r = this.stmt.run(...(params as never[]));
+    return { changes: Number(r.changes), lastInsertRowid: r.lastInsertRowid };
+  }
+  get<T = unknown>(...params: SQLiteValue[]): T | undefined {
+    return this.stmt.get(...(params as never[])) as T | undefined;
+  }
+  all<T = unknown>(...params: SQLiteValue[]): T[] {
+    return this.stmt.all(...(params as never[])) as T[];
+  }
+  iterate<T = unknown>(...params: SQLiteValue[]): IterableIterator<T> {
+    return this.stmt.iterate(...(params as never[])) as IterableIterator<T>;
+  }
+}
+
+/** Adapts a node:sqlite DatabaseSync to QMD's Database interface. */
+class NodeSqliteDatabase implements Database {
+  private txDepth = 0;
+  constructor(private readonly raw: RawDatabase) {}
+  exec(sql: string): void {
+    this.raw.exec(sql);
+  }
+  prepare(sql: string): Statement {
+    return new NodeSqliteStatement(this.raw.prepare(sql));
+  }
+  loadExtension(path: string): void {
+    this.raw.loadExtension(path);
+  }
+  close(): void {
+    this.raw.close();
+  }
+  /**
+   * better-sqlite3-style transaction: returns a function that runs `fn` inside a
+   * transaction (committing on success, rolling back on throw). node:sqlite has no
+   * `transaction()` helper, so we drive BEGIN/COMMIT/ROLLBACK directly and use
+   * SAVEPOINTs for nested calls so re-entrancy is safe.
+   */
+  transaction<T extends (...args: SQLiteValue[]) => unknown>(fn: T): T {
+    const wrapped = ((...args: SQLiteValue[]) => {
+      const nested = this.txDepth > 0;
+      const sp = `qmd_sp_${this.txDepth}`;
+      this.raw.exec(nested ? `SAVEPOINT ${sp}` : "BEGIN");
+      this.txDepth++;
+      try {
+        const out = fn(...args);
+        // RELEASE/COMMIT can itself throw (e.g. a deferred-constraint or busy
+        // failure on commit); let that fall to the catch so we still ROLLBACK.
+        this.raw.exec(nested ? `RELEASE ${sp}` : "COMMIT");
+        return out;
+      } catch (err) {
+        this.raw.exec(nested ? `ROLLBACK TO ${sp}` : "ROLLBACK");
+        throw err;
+      } finally {
+        // Decrement exactly once on every exit path. Doing this in `finally`
+        // (not before COMMIT) keeps txDepth correct even when COMMIT throws and
+        // control passes through catch — otherwise it would decrement twice.
+        this.txDepth--;
+      }
+    }) as T;
+    return wrapped;
+  }
+}
+
+/**
+ * Open a SQLite database (node:sqlite).
+ *
+ * SQLite defaults `busy_timeout` to 0, so concurrent writers throw `SQLITE_BUSY`
+ * instead of waiting. WAL improves read-while-write concurrency but does not
+ * serialise writers. Setting the timeout at connection open makes parallel
+ * processes (e.g. an `update` or `query` racing a long `embed`, or a first-open
+ * schema migration racing any routine command) queue at batch boundaries instead
+ * of failing on contact. WAL is enabled here too (with a bounded retry) so
+ * connection-level pragmas live in one place and the cold-database journal
+ * migration survives concurrent opens.
+ *
+ * Default 120_000 ms outlasts the worst-case batch commit on a multi-GB index.
+ * Override with `QMD_SQLITE_BUSY_TIMEOUT` (ms; `0` restores fail-fast behaviour).
+ *
+ * `allowExtension` is required for node:sqlite to load the sqlite-vec extension.
+ */
+export function openDatabase(path: string): Database {
+  const raw = new DatabaseSyncCtor(path, { allowExtension: true });
+  // Belt-and-suspenders: also enable runtime extension loading if exposed.
+  (raw as { enableLoadExtension?: (on: boolean) => void }).enableLoadExtension?.(true);
+  const db = new NodeSqliteDatabase(raw);
+  const rawTimeout = process.env.QMD_SQLITE_BUSY_TIMEOUT;
+  const parsed = rawTimeout !== undefined && rawTimeout !== "" ? Number(rawTimeout) : Number.NaN;
+  const busyTimeoutMs = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 120_000;
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+  enableWal(db, busyTimeoutMs);
+  return db;
 }
 
 /**

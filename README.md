@@ -36,7 +36,7 @@ and wires it in via `QMD_CA_BUNDLE` (no org-specific paths are ever stored in th
 
 ```sh
 # qmd-gd is a skills folder — clone OR download the repo ZIP from GitHub, then build.
-# Runs on Node (>=20). Non-developers: see "Get started" above and just say "help me get set up".
+# Runs on Node (>=22.13). Non-developers: see "Get started" above and just say "help me get set up".
 git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd   # or: download the ZIP from GitHub and unzip
 bash scripts/install.sh                     # build + link + skills (or: npm install && npm run build && npm link)
 
@@ -453,8 +453,9 @@ judge.
 
 ### System Requirements
 
-- **Node.js** >= 20 — the runtime. better-sqlite3 bundles a capable SQLite, so no
-  separate SQLite install is needed for the sqlite-vec extension.
+- **Node.js** >= 22.13 — the runtime. qmd uses Node's built-in `node:sqlite` engine
+  (which ships with FTS5), so there is **no native SQLite module to compile**; sqlite-vec
+  loads into it as a prebuilt extension.
 
 ### GGUF Model (via node-llama-cpp)
 
@@ -497,7 +498,7 @@ Supported model families:
 
 ## Installation
 
-qmd-gd is a private fork (not published to npm). It runs on **Node (>=20)**, and the
+qmd-gd is a private fork (not published to npm). It runs on **Node (>=22.13)**, and the
 embedding model is **vendored in the repo**, so setup needs no HuggingFace access.
 
 > **Most users don't run these by hand** — see
@@ -523,13 +524,14 @@ QMD_CA_BUNDLE=/path/to/corp-ca.pem bash scripts/install.sh # behind a TLS-interc
 Equivalent manual steps:
 
 ```sh
-npm install      # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
+npm install      # JS deps + a prebuilt sqlite-vec extension + node-llama-cpp (no SQLite to compile)
 npm run build    # compiles dist/ via tsc
 npm link         # or: npm i -g .
 qmd skill install --global --yes
 ```
 
-After a Node major-version upgrade, run `npm rebuild` so the native modules match the new ABI.
+No `npm rebuild` is ever needed: the SQLite engine is Node's built-in `node:sqlite`, sqlite-vec
+is a prebuilt loadable extension, and node-llama-cpp uses N-API — all Node-version-independent.
 
 ### Development
 

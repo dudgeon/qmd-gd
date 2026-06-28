@@ -4,6 +4,7 @@
 
 import { describe, test, expect, afterEach } from "vitest";
 import { openDatabase } from "../src/db.js";
+import { findStaleVectorModel } from "../src/store.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,6 +124,118 @@ describe("openDatabase", () => {
       }
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("transaction() shim (node:sqlite has no built-in transaction helper)", () => {
+  const countRows = (db: ReturnType<typeof openDatabase>): number =>
+    (db.prepare("SELECT COUNT(*) AS n FROM t").get() as { n: number }).n;
+
+  test("commits on success and rolls back the whole body on throw", () => {
+    const db = openDatabase(":memory:");
+    try {
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+      db.transaction(() => {
+        db.prepare("INSERT INTO t (v) VALUES ('a')").run();
+      })();
+      expect(countRows(db)).toBe(1);
+
+      expect(() =>
+        db.transaction(() => {
+          db.prepare("INSERT INTO t (v) VALUES ('b')").run();
+          throw new Error("boom");
+        })(),
+      ).toThrow("boom");
+      // The failed transaction's insert must not have persisted.
+      expect(countRows(db)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("nested calls use savepoints: an inner rollback leaves the outer intact", () => {
+    const db = openDatabase(":memory:");
+    try {
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+      db.transaction(() => {
+        db.prepare("INSERT INTO t (v) VALUES ('outer')").run();
+        try {
+          db.transaction(() => {
+            db.prepare("INSERT INTO t (v) VALUES ('inner')").run();
+            throw new Error("inner boom");
+          })();
+        } catch {
+          /* swallow: the outer transaction continues */
+        }
+        db.prepare("INSERT INTO t (v) VALUES ('outer2')").run();
+      })();
+      const rows = (db.prepare("SELECT v FROM t ORDER BY id").all() as { v: string }[]).map((r) => r.v);
+      expect(rows).toEqual(["outer", "outer2"]); // 'inner' rolled back to its savepoint
+    } finally {
+      db.close();
+    }
+  });
+
+  test("txDepth stays balanced across failures (no 'transaction within a transaction')", () => {
+    // Regression guard: if a throwing COMMIT/ROLLBACK double-decremented txDepth,
+    // a later BEGIN would fail. Interleave failing and succeeding transactions.
+    const db = openDatabase(":memory:");
+    try {
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+      for (let i = 0; i < 3; i++) {
+        expect(() => db.transaction(() => { throw new Error("x"); })()).toThrow("x");
+        db.transaction(() => { db.prepare("INSERT INTO t (v) VALUES ('ok')").run(); })();
+      }
+      expect(countRows(db)).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("findStaleVectorModel (embed self-heal detector)", () => {
+  const BGE = "bundled:bge-small-en-v1.5-Q8_0.gguf";
+  const GEMMA = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+  // Mirrors the real content_vectors schema in store.ts.
+  const SCHEMA = `CREATE TABLE content_vectors (
+    hash TEXT NOT NULL, seq INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0,
+    model TEXT NOT NULL, embed_fingerprint TEXT NOT NULL DEFAULT '',
+    total_chunks INTEGER NOT NULL DEFAULT 1, embedded_at TEXT NOT NULL,
+    PRIMARY KEY (hash, seq))`;
+  const seed = (db: ReturnType<typeof openDatabase>, model: string): void => {
+    db.prepare("INSERT INTO content_vectors (hash, model, embedded_at) VALUES (?, ?, '')").run(`h-${model}`, model);
+  };
+
+  test("returns null on a fresh index (content_vectors absent)", () => {
+    const db = openDatabase(":memory:");
+    try {
+      expect(findStaleVectorModel(db, BGE)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("returns null when every vector matches the current model", () => {
+    const db = openDatabase(":memory:");
+    try {
+      db.exec(SCHEMA);
+      seed(db, BGE);
+      expect(findStaleVectorModel(db, BGE)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("returns the foreign model when the index was built with a different one", () => {
+    // This is what triggers the re-embed that un-strands a poisoned re-install.
+    const db = openDatabase(":memory:");
+    try {
+      db.exec(SCHEMA);
+      seed(db, GEMMA);
+      expect(findStaleVectorModel(db, BGE)).toBe(GEMMA);
+    } finally {
+      db.close();
     }
   });
 });

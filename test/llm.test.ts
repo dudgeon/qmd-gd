@@ -24,11 +24,54 @@ import {
   isBgeEmbeddingModel,
   isQwen3EmbeddingModel,
   resolveBundledModelPath,
+  isLegacyDefaultEmbedModel,
   formatQueryForEmbedding,
   formatDocForEmbedding,
   DEFAULT_EMBED_MODEL_URI,
   type ILLMSession,
 } from "../src/llm.js";
+
+describe("legacy-default embedding model migration", () => {
+  const LEGACY = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+  const QWEN = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
+  const withEnv = (val: string | undefined, fn: () => void): void => {
+    const prev = process.env.QMD_EMBED_MODEL;
+    if (val === undefined) delete process.env.QMD_EMBED_MODEL;
+    else process.env.QMD_EMBED_MODEL = val;
+    try {
+      fn();
+    } finally {
+      if (prev === undefined) delete process.env.QMD_EMBED_MODEL;
+      else process.env.QMD_EMBED_MODEL = prev;
+    }
+  };
+
+  test("isLegacyDefaultEmbedModel recognizes the prior embeddinggemma default only", () => {
+    expect(isLegacyDefaultEmbedModel(LEGACY)).toBe(true);
+    expect(isLegacyDefaultEmbedModel(DEFAULT_EMBED_MODEL_URI)).toBe(false);
+    expect(isLegacyDefaultEmbedModel(QWEN)).toBe(false);
+  });
+
+  test("a persisted legacy default is migrated to the current default (not pinned)", () => {
+    // This is what un-strands a re-installer whose config auto-saved embeddinggemma.
+    withEnv(undefined, () => expect(resolveEmbedModel({ embed: LEGACY })).toBe(DEFAULT_EMBED_MODEL_URI));
+  });
+
+  test("a deliberately-chosen non-legacy model is kept", () => {
+    withEnv(undefined, () => expect(resolveEmbedModel({ embed: QWEN })).toBe(QWEN));
+  });
+
+  test("QMD_EMBED_MODEL overrides a legacy-default config (which is ignored)", () => {
+    withEnv("/abs/custom.gguf", () => expect(resolveEmbedModel({ embed: LEGACY })).toBe("/abs/custom.gguf"));
+  });
+
+  test("no config + no env resolves to the bundled default", () => {
+    withEnv(undefined, () => {
+      expect(resolveEmbedModel()).toBe(DEFAULT_EMBED_MODEL_URI);
+      expect(DEFAULT_EMBED_MODEL_URI).toBe("bundled:bge-small-en-v1.5-Q8_0.gguf");
+    });
+  });
+});
 
 describe("embedding model family detection", () => {
   test("isBgeEmbeddingModel matches bge model names, not incidental path substrings", () => {

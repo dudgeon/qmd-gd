@@ -1,8 +1,9 @@
 # QMD - Query Markup Documents (qmd-gd fork)
 
-qmd-gd runs on **Node (>=20)** (`npm install`, `npm run build`, `npm link`). After a
-Node major upgrade, run `npm rebuild` so native modules (better-sqlite3, sqlite-vec,
-node-llama-cpp) match the new ABI.
+qmd-gd runs on **Node (>=22.13)** (`npm install`, `npm run build`, `npm link`). Its SQLite
+engine is Node's built-in **`node:sqlite`** (not native better-sqlite3), so there is no native
+SQLite to compile or rebuild across Node versions. sqlite-vec is a prebuilt loadable extension
+and node-llama-cpp uses N-API — both Node-version-independent, so no `npm rebuild` is needed.
 
 qmd-gd ships its skills under `.claude/skills/` and the `qmd-retrieve` subagent under
 `.claude/agents/` (no Claude Code plugin). When this folder is opened in Claude Code,

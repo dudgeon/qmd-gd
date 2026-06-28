@@ -75,9 +75,10 @@ import {
   generateEmbeddings,
   maybeAdoptLegacyEmbeddingFingerprint,
   syncConfigToDb,
+  findStaleVectorModel,
   type ReindexResult,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, inspectGgufFile, isDarwinMetalMitigationActive } from "../llm.js";
+import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveBundledModelPath, inspectGgufFile, isDarwinMetalMitigationActive, DEFAULT_EMBED_MODEL_URI, isLegacyDefaultEmbedModel } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -1840,6 +1841,60 @@ function resolveModelsForCli(): { embed: string } {
   return ensureModelsConfiguredForCli();
 }
 
+/**
+ * `qmd config <get|set|unset> models.embed [<value>]` — read or change the
+ * persisted embedding model in index.yml without hand-editing YAML. Clearing it
+ * falls back to the vendored bundled default. A model change is picked up on the
+ * next `qmd embed`, which auto-recovers (re-embeds) on a dimension/model change.
+ */
+function configCommand(args: string[]): void {
+  const sub = args[0] ?? "get";
+  const key = args[1];
+  if (key !== undefined && key !== "models.embed") {
+    throw new Error(`qmd config currently supports only the 'models.embed' key (got '${key}').`);
+  }
+  const value = args[2];
+  const config = loadConfig();
+  const current = config.models?.embed;
+  switch (sub) {
+    case "get":
+      console.log(
+        current
+          ? `models.embed = ${current}`
+          : `models.embed = (unset) — using the bundled default ${DEFAULT_EMBED_MODEL_URI}`,
+      );
+      return;
+    case "set": {
+      if (!value) throw new Error("Usage: qmd config set models.embed <value>");
+      saveConfig({ ...config, models: { ...(config.models ?? {}), embed: value } });
+      console.log(`${c.green}✓${c.reset} models.embed = ${value}`);
+      if (isLegacyDefaultEmbedModel(value)) {
+        // Persisted, but resolveEmbedModel treats a legacy default as "use the
+        // current default" and ignores it — say so rather than letting the user
+        // think they pinned a model that will silently not take effect.
+        console.log(
+          `${c.yellow}Note:${c.reset} ${shortModelName(value)} was a prior built-in default, so qmd treats it as ` +
+            `"use the current default" (${shortModelName(DEFAULT_EMBED_MODEL_URI)}) and will not pin it. ` +
+            `Set a different model, or 'qmd config unset models.embed' for the bundled default.`,
+        );
+      }
+      console.log("Run 'qmd embed -f' to re-embed with the new model (it auto-recovers on a model change).");
+      return;
+    }
+    case "unset":
+    case "reset": {
+      const models = { ...(config.models ?? {}) };
+      delete models.embed;
+      saveConfig({ ...config, models });
+      console.log(`${c.green}✓${c.reset} models.embed cleared — using the bundled default ${DEFAULT_EMBED_MODEL_URI}.`);
+      console.log("Run 'qmd embed -f' if the index was built with a different model (it auto-recovers).");
+      return;
+    }
+    default:
+      throw new Error("Usage: qmd config <get|set|unset> models.embed [<value>]");
+  }
+}
+
 async function vectorIndex(
   model: string = resolveEmbedModelForCli(),
   force: boolean = false,
@@ -1847,6 +1902,23 @@ async function vectorIndex(
 ): Promise<void> {
   const storeInstance = getStore();
   const db = storeInstance.db;
+
+  // Self-heal on a model change (e.g. a re-install that switched the default, or an
+  // auto-migrated legacy config): if the index holds vectors from a DIFFERENT model,
+  // their dimensions/fingerprint won't match, so re-embed every collection cleanly
+  // (dropping the stale shared vec table) instead of erroring with a dimension
+  // mismatch. A model change is global, so ignore any -c filter for the rebuild.
+  if (!force) {
+    const stale = findStaleVectorModel(db, model);
+    if (stale) {
+      console.log(
+        `${c.yellow}Embedding model changed (${shortModelName(stale)} → ${shortModelName(model)}); ` +
+          `re-embedding all collections.${c.reset}`,
+      );
+      force = true;
+      batchOptions = { ...batchOptions, collection: undefined };
+    }
+  }
 
   if (force) {
     console.log(`${c.yellow}Force re-indexing: clearing all vectors...${c.reset}`);
@@ -3349,8 +3421,9 @@ function showHelp(): void {
 }
 
 // Minimum supported Node major. Keep in sync with package.json "engines.node",
-// the `.npmrc` engine-strict gate, and the explainer comment in bin/qmd.
-const MIN_NODE_MAJOR = 20;
+// the `.npmrc` engine-strict gate, and the explainer comment in bin/qmd. The real
+// floor is 22.13 (the built-in node:sqlite engine); src/db.ts enforces the minor.
+const MIN_NODE_MAJOR = 22;
 
 function doctorCheck(label: string, ok: boolean, details: string): void {
   const mark = ok ? `${c.green}✓${c.reset}` : `${c.yellow}⚠${c.reset}`;
@@ -3417,6 +3490,16 @@ function formatModelDiagnosticPath(path: string): string {
 
 function findCachedModelInspection(model: string): CachedModelInspection {
   const invalid: string[] = [];
+  // Bundled models are vendored in-repo (models/), not in the download cache —
+  // resolve and inspect the in-repo file so doctor never falsely reports them
+  // "missing" or tells the user to run `qmd pull`.
+  const bundled = resolveBundledModelPath(model);
+  if (bundled) {
+    const inspection = inspectGgufFile(bundled);
+    if (inspection.valid) return { path: bundled, invalid };
+    if (inspection.exists) invalid.push(`${formatModelDiagnosticPath(bundled)}: ${inspection.details}`);
+    return { path: null, invalid };
+  }
   if (model.startsWith("hf:")) {
     const filename = model.split("/").pop();
     if (!filename || !existsSync(DEFAULT_MODEL_CACHE_DIR)) return { path: null, invalid };
@@ -3820,17 +3903,17 @@ async function showDoctor(): Promise<void> {
 
   console.log(`${c.bold}QMD Doctor${c.reset}\n`);
   console.log(`Index: ${getDbPath()}`);
-  console.log(`Runtime: better-sqlite3`);
+  console.log(`SQLite engine: node:sqlite (Node built-in — no native module to compile/rebuild)`);
 
   const doctorNodeMajor = Number(process.versions.node.split(".")[0]);
   const nodeOk = Number.isFinite(doctorNodeMajor) && doctorNodeMajor >= MIN_NODE_MAJOR;
   doctorCheck(
     "Node runtime",
     nodeOk,
-    nodeOk ? `v${process.versions.node}` : `v${process.versions.node} — qmd needs Node >= ${MIN_NODE_MAJOR}`,
+    nodeOk ? `v${process.versions.node}` : `v${process.versions.node} — qmd needs Node >= 22.13 (built-in node:sqlite)`,
   );
   if (!nodeOk) {
-    nextSteps.push(`Upgrade to Node >= ${MIN_NODE_MAJOR} (you are on v${process.versions.node}), then run 'npm rebuild'`);
+    nextSteps.push(`Upgrade to Node >= 22.13 (you are on v${process.versions.node}) — e.g. the latest LTS`);
   }
 
   try {
@@ -3840,8 +3923,8 @@ async function showDoctor(): Promise<void> {
     doctorCheck("SQLite runtime", false, error instanceof Error ? error.message : String(error));
   }
 
-  const betterSqliteVersion = pkg.dependencies?.["better-sqlite3"] ?? pkg.devDependencies?.["better-sqlite3"] ?? "not declared";
-  doctorCheck("better-sqlite3 package", true, String(betterSqliteVersion));
+  const llamaVersion = pkg.dependencies?.["node-llama-cpp"] ?? "not declared";
+  doctorCheck("node-llama-cpp package", true, String(llamaVersion));
 
   try {
     const row = db.prepare(`SELECT vec_version() AS version`).get() as { version: string };
@@ -4287,6 +4370,10 @@ if (isMain) {
 
     case "doctor":
       await showDoctor();
+      break;
+
+    case "config":
+      configCommand(cli.args);
       break;
 
     case "update":

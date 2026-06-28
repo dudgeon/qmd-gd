@@ -13,11 +13,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // No runtime Node-version guard lives here on purpose: this launcher is an
-// extensionless ESM file, which Node < 20 cannot even load (it throws
-// ERR_UNKNOWN_FILE_EXTENSION before any code runs), so a guard here could never
-// fire for the versions it would target. The Node >= 20 floor is enforced at
-// install time by `.npmrc` engine-strict, and `qmd doctor` reports the running
-// Node version against that floor.
+// extensionless ESM file, which old Node cannot even load (ERR_UNKNOWN_FILE_EXTENSION
+// before any code runs), so a guard here could never fire for the versions it targets.
+// The Node >= 22.13 floor — required by the built-in `node:sqlite` engine — is enforced
+// at install time by `.npmrc` engine-strict; at runtime `src/db.ts` throws a clear
+// "needs Node >= 22.13" error if node:sqlite is unavailable, and `qmd doctor` reports
+// the running Node version.
 
 // Resolve symlinks so global installs (npm link / npm install -g) can find
 // the actual package directory instead of the global bin directory.
@@ -72,6 +73,11 @@ for (const a of rawArgs) {
 }
 
 const childEnv = { ...process.env };
+// Suppress the node:sqlite ExperimentalWarning (informational; it would otherwise
+// print on every DB-touching command). NODE_OPTIONS is honored by the spawned node
+// AND propagates to any child it spawns (e.g. tsx's inner node in source mode), so
+// it covers both dist and source mode — and, unlike a CLI flag, doesn't shift argv.
+childEnv.NODE_OPTIONS = `--disable-warning=ExperimentalWarning ${childEnv.NODE_OPTIONS ?? ""}`.trim();
 if (!childEnv.NODE_EXTRA_CA_CERTS) {
   const caBundle = childEnv.QMD_CA_BUNDLE || childEnv.SSL_CERT_FILE;
   if (caBundle && existsSync(caBundle)) {
@@ -128,6 +134,9 @@ if (!useSourceMode && !existsSync(jsEntry)) {
 // qmd-gd is Node-only: always launch under `node`. Source mode runs the
 // TypeScript entry via tsx; dist mode runs the compiled JS directly.
 const runner = "node";
+// Note: the node:sqlite ExperimentalWarning is suppressed via NODE_OPTIONS in
+// childEnv (set above), which the real node honors and propagates to any child
+// (e.g. tsx's inner node) — without adding a CLI arg that would shift argv.
 const args = useSourceMode ? sourceArgs : [jsEntry, ...forwardArgs];
 
 const child = spawn(runner, args, {

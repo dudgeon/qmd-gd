@@ -11,6 +11,33 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 
 ### Changes
 
+- **SQLite engine is now Node's built-in `node:sqlite` — no native module, no compile, no ABI rebuild.**
+  Dropped the native `better-sqlite3` dependency, which had no prebuilt for Node 20 and so
+  source-compiled SQLite (the multi-minute, "is it hung?" install) and broke with a
+  `NODE_MODULE_VERSION` mismatch whenever the running Node changed. `node:sqlite` ships with Node
+  (FTS5 compiled in), so installs no longer compile SQLite and qmd is **Node-version-robust**:
+  `sqlite-vec` is a prebuilt loadable extension and `node-llama-cpp` is N-API — neither is
+  ABI-bound, so `npm rebuild` is never needed. The Database/Statement abstraction in `src/db.ts`
+  is unchanged (the ~118 call sites are untouched). **Node floor raised to >= 22.13** (where
+  `node:sqlite` is flag-free); the full suite passes on node:sqlite. The informational
+  `node:sqlite` ExperimentalWarning is suppressed at its source in `src/db.ts`, so it never
+  reaches stderr on any launch path (`bin/qmd`, a direct `node`/`tsx` entry, or the test
+  harness) — no dependency on `NODE_OPTIONS`/`NODE_NO_WARNINGS`. `@types/node` is pinned as an
+  explicit devDependency so the build's node:sqlite types no longer rely on transitive resolution.
+- **Setup self-heals a prior/partial install — re-running `/setup` from a fresh download just works.**
+  Persistent state lives outside the unzipped folder (`~/.config/qmd/index.yml`, `~/.cache/qmd/`),
+  so a re-install used to inherit it and strand the user. Now an auto-persisted *legacy default*
+  model in the config (e.g. embeddinggemma) is treated as "use the current default" and migrated
+  to the vendored bge on the next command; and `qmd embed` **auto-recovers** when the index was
+  built with a different model/dimension — it drops the stale vectors and re-embeds all
+  collections (loud message) instead of erroring with a dimension mismatch. Verified end-to-end:
+  a fresh folder + a poisoned embeddinggemma config + a 768-dim index heals to bge/384 with one
+  `qmd embed`, no hand-fixes.
+- **New `qmd config get|set|unset models.embed`** (plus `qmd config reset`) to change or clear the
+  embedding model without hand-editing `index.yml`.
+- **`qmd doctor` fixes:** reports the SQLite engine as `node:sqlite (built-in)`, and the model-cache
+  check now recognizes the vendored bundled model instead of falsely reporting it "missing — run
+  `qmd pull`".
 - **Default embedding model is now vendored in-repo — no network needed to embed.**
   Switched the default from `hf:ggml-org/embeddinggemma-300M-GGUF` (768-dim, Gemma
   license, downloaded from HuggingFace) to **bge-small-en-v1.5** (BAAI, MIT, 384-dim),

@@ -43,13 +43,16 @@ run()  { if [[ "$DRYRUN" == "1" ]]; then printf '    [dry-run] %s\n' "$*"; else 
 
 # ── Node floor ──────────────────────────────────────────────────────────────
 if ! command -v node >/dev/null 2>&1; then
-  echo "install.sh: Node is not installed. qmd-gd needs Node >=20." >&2; exit 1
+  echo "install.sh: Node is not installed. qmd-gd needs Node >=22.13 (latest LTS recommended)." >&2; exit 1
 fi
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-if [[ "$NODE_MAJOR" -lt 20 ]]; then
-  echo "install.sh: Node $(node -v) is too old; qmd-gd needs Node >=20." >&2; exit 1
+NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]' 2>/dev/null || echo 0)"
+if [[ "$NODE_MAJOR" -lt 22 || ( "$NODE_MAJOR" -eq 22 && "$NODE_MINOR" -lt 13 ) ]]; then
+  echo "install.sh: Node $(node -v) is too old; qmd-gd needs Node >=22.13 for the built-in node:sqlite engine." >&2
+  echo "  Install the latest LTS (e.g. 'nvm install --lts && nvm use --lts') and re-run." >&2
+  exit 1
 fi
-say "Node $(node -v) detected (>=20 OK)."
+say "Node $(node -v) detected (>=22.13 OK — built-in node:sqlite engine, no native SQLite to compile)."
 
 # ── CA bundle / proxy TLS ───────────────────────────────────────────────────
 CA_BUNDLE="${QMD_CA_BUNDLE:-${NODE_EXTRA_CA_CERTS:-${SSL_CERT_FILE:-}}}"
@@ -68,11 +71,13 @@ fi
 
 # ── npm install (with scoped insecure fallback) ─────────────────────────────
 say "Installing dependencies (npm install)…"
+info "Pure-JS deps + a prebuilt sqlite-vec extension + node-llama-cpp's (N-API) binary —"
+info "there is NO SQLite to compile. node-llama-cpp may take a moment to fetch its backend."
 INSTALL_LOG="$(mktemp)"
 npm_install_ok=1
 if [[ "$DRYRUN" == "1" ]]; then
   info "[dry-run] npm install"
-elif npm install 2>&1 | tee "$INSTALL_LOG"; then
+elif npm install --no-fund --no-audit 2>&1 | tee "$INSTALL_LOG"; then
   npm_install_ok=1
 else
   npm_install_ok=0

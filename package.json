@@ -47,7 +47,6 @@
     "url": "https://github.com/dudgeon/qmd-gd/issues"
   },
   "dependencies": {
-    "better-sqlite3": "12.10.0",
     "fast-glob": "3.3.3",
     "node-llama-cpp": "3.18.1",
     "picomatch": "4.0.4",
@@ -63,20 +62,19 @@
     "sqlite-vec-windows-x64": "0.1.9"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "^24",
     "tsx": "4.21.0",
     "typescript": "^5.9.3",
     "vitest": "3.2.4"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild",
       "node-llama-cpp"
     ]
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.13.0"
   },
   "keywords": [
     "markdown",
