@@ -81,9 +81,9 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
   Duo flow on the main agent), so an expensive Opus session offloads the mechanical work.
   `qmd skill install --global` now also symlinks it into `~/.claude/agents/`. (ADR 0007)
 - Hardened the `qmd-setup` skill for restricted-egress networks: the agent must never
-  contact an external domain (only `capitalone.com`/`github.com` are reachable by the
-  agent). The network preflight (`preflight-deps.sh`, which `curl`s npm/HuggingFace) is
-  now explicitly **user-run** — the agent hands it over and reads back the pasted output.
+  contact an external domain (only an allowlisted set is reachable by the agent). The
+  network preflight (`preflight-deps.sh`, which `curl`s the npm registry / prebuilt hosts)
+  is now explicitly **user-run** — the agent hands it over and reads back the pasted output.
   The local read-only probe (`qmd-setup-context.sh`) stays agent-runnable (no network).
 - **Unbundled the Claude Code plugin → plain skills folder.** Removed
   `.claude-plugin/marketplace.json` and moved the skills from `skills/` to **`.claude/skills/`**

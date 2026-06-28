@@ -16,8 +16,8 @@ step. Two hard rules from that skill that you MUST honor:
 
 - **Never run state-mutating commands for the user** (`npm install`, `qmd skill install`,
   `qmd collection add`, `qmd update`, `qmd embed`, `qmd pull`). Print them for the user to run.
-- **Never contact an external network domain.** Only `capitalone.com` / `github.com` are
-  reachable by you; the user runs anything that hits the npm registry, HuggingFace, or
+- **Never contact an external network domain.** In locked-down environments you may reach
+  only an allowlisted set of domains; the user runs anything that hits the npm registry or
   prebuilt hosts (including the preflight script) from their own terminal.
 
 The only setup helper you may run yourself is the local, network-free probe
