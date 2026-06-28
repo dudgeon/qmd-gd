@@ -522,6 +522,74 @@ describe("LlamaCpp embedding truncation", () => {
   });
 });
 
+describe("LlamaCpp embedding context size", () => {
+  async function contextSizeFor(trainContextSize: number): Promise<number | undefined> {
+    const llm = new LlamaCpp({}) as any;
+    const createEmbeddingContext = vi.fn(async () => ({
+      getEmbeddingFor: vi.fn(),
+      dispose: vi.fn(async () => {}),
+    }));
+    const model = {
+      trainContextSize,
+      tokenize: (t: string) => Array.from(t),
+      detokenize: (toks: readonly unknown[]) => toks.join(""),
+      createEmbeddingContext,
+    };
+    llm.embedModel = model;
+    llm.ensureEmbedModel = vi.fn().mockResolvedValue(model);
+    llm.computeParallelism = vi.fn().mockResolvedValue(1);
+    llm.threadsPerContext = vi.fn().mockResolvedValue(0);
+    llm.touchActivity = vi.fn();
+
+    await llm.ensureEmbedContexts();
+    const arg = createEmbeddingContext.mock.calls[0]?.[0] as { contextSize?: number } | undefined;
+    return arg?.contextSize;
+  }
+
+  test("caps the embedding context to the model's trained window (bge-small 512)", async () => {
+    // Regression: creating a 2048-token context on a 512-token model aborts the
+    // process in native code with GGML_ASSERT(i01 >= 0 && i01 < ne01) the first
+    // time a chunk over 512 tokens is embedded. The context must be 512, not 2048.
+    expect(await contextSizeFor(512)).toBe(512);
+  });
+
+  test("never exceeds the configured embed context size when the model trains longer", async () => {
+    // EMBED_CONTEXT_SIZE default is 2048; an 8192-token model is still capped to 2048.
+    expect(await contextSizeFor(8192)).toBe(2048);
+  });
+});
+
+describe("LlamaCpp embedBatch truncation warning", () => {
+  test("warns once per batch with a count, not once per chunk", async () => {
+    const llm = new LlamaCpp({}) as any;
+    llm._ciMode = false; // embedBatch refuses to run under CI otherwise
+    const getEmbeddingFor = vi.fn(async (t: string) => ({ vector: new Float32Array([1]), text: t }));
+    const model = {
+      trainContextSize: 512,
+      tokenize: (t: string) => Array.from({ length: t.length }, () => 1),
+      detokenize: (toks: readonly number[]) => "x".repeat(toks.length),
+      createEmbeddingContext: vi.fn(async () => ({ getEmbeddingFor, dispose: vi.fn(async () => {}) })),
+    };
+    llm.embedModel = model;
+    llm.ensureEmbedModel = vi.fn().mockResolvedValue(model);
+    llm.computeParallelism = vi.fn().mockResolvedValue(1); // single-context sequential path
+    llm.threadsPerContext = vi.fn().mockResolvedValue(0);
+    llm.touchActivity = vi.fn();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const longTexts = ["x".repeat(2000), "x".repeat(2000), "x".repeat(2000)];
+      const results = await llm.embedBatch(longTexts);
+      expect(results).toHaveLength(3);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0]?.[0] ?? "")).toMatch(/3 of 3 chunks truncated/);
+      expect(String(warnSpy.mock.calls[0]?.[0] ?? "")).toContain("512 tokens");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
 describe("LlamaCpp.getDeviceInfo", () => {
   test("can skip build attempts for status probes", async () => {
     const llm = new LlamaCpp({}) as any;

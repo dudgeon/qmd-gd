@@ -11,6 +11,33 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 
 ### Changes
 
+- **`/qmd-setup` now runs the qmd CLI for the user instead of dictating a checklist.** The skill
+  used to print every command — `qmd collection add`, `qmd update`, `qmd embed`, include/exclude,
+  `qmd doctor`/`status`/`search`, the Duo cron registration — for the user to paste. The agent now
+  runs all of those itself (they're on-device, network-free, and idempotent), gathering the inputs
+  it needs (which folders, what scope) by asking. The user is handed only the commands the agent's
+  sandbox genuinely can't run: npm installs (`npm install` / `scripts/install.sh`), the preflight
+  and any reachability `curl`, `qmd pull` for an `hf:` model, and corporate registry/CA config.
+  `CLAUDE.md`'s "Getting set up" and "Do NOT run automatically" sections were updated to match
+  (state-mutating qmd commands are run on explicit request, not as an unprompted side-effect).
+- **Fixed a native process abort during `qmd embed` on short-context (BERT-family) models.** The
+  embedding context was always created at `EMBED_CONTEXT_SIZE` (2048) even for models with a
+  smaller trained window like bge-small (512). On such a model, the first chunk exceeding 512
+  tokens indexed the fixed position-embedding matrix out of bounds and aborted the whole process
+  with a native `GGML_ASSERT(i01 >= 0 && i01 < ne01)` in `ggml_compute_forward_get_rows` (an
+  uncatchable `abort()`, not a JS error). Context creation and input truncation now both derive
+  from one `embedContextSize()` helper capped to `min(EMBED_CONTEXT_SIZE, model.trainContextSize)`,
+  so they can never drift apart. (Bundled bge-small now embeds at a 512 context.)
+- **`qmd embed` no longer floods the terminal with truncation warnings.** Token-dense chunks
+  (code, URLs) frequently exceed the embed limit; the warning fired once per chunk. It's now
+  deduplicated to one summary line per `embedBatch` call — `⚠ N of M chunks truncated to fit the
+  embedding context (512 tokens)`.
+- **Documented the Apple Silicon + sandbox Metal constraint.** On arm64 Macs the only
+  node-llama-cpp prebuilt is Metal/GPU, and the Claude Code agent sandbox blocks Metal init, so
+  `qmd embed` aborts inside it (and `QMD_FORCE_CPU=1`/`GGML_NO_METAL=1` can't help — there's no
+  CPU-only arm64 binary). The qmd-setup skill now hands `qmd embed` to the user on Apple Silicon
+  (BM25 `update`/`search` still run in-sandbox), `qmd doctor` surfaces the same hint when its
+  device probe fails there, and `CLAUDE.md` records the constraint.
 - **SQLite engine is now Node's built-in `node:sqlite` — no native module, no compile, no ABI rebuild.**
   Dropped the native `better-sqlite3` dependency, which had no prebuilt for Node 20 and so
   source-compiled SQLite (the multi-minute, "is it hung?" install) and broke with a
