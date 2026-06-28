@@ -9,6 +9,15 @@ qmd-gd ships its skills under `.claude/skills/` and the `qmd-retrieve` subagent 
 `.claude/agents/` (no Claude Code plugin). When this folder is opened in Claude Code,
 the bundled skills (`qmd`, `qmd-setup`, `ask-qmd`) and the `qmd-retrieve` subagent auto-load.
 
+## This is a fork — point `gh` at it
+
+qmd-gd is a fork of `tobi/qmd` (remotes: `origin` = `dudgeon/qmd-gd`, `upstream` =
+`tobi/qmd`). Run **`gh repo set-default dudgeon/qmd-gd`** once per clone — otherwise a
+bare `gh pr list` / `gh pr view` resolves to **upstream** and returns tobi/qmd's open
+PRs (none of which are yours to merge), not this fork's. Verify with
+`gh repo set-default --view` (must read `dudgeon/qmd-gd`); pass `--repo tobi/qmd`
+explicitly when you actually want upstream.
+
 ## Getting set up
 
 When the user asks to **get set up / install qmd / "/setup" / "help me get started"**, read
