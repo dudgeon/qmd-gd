@@ -3889,6 +3889,12 @@ async function runDoctorDeviceChecks(nextSteps: string[]): Promise<void> {
     const message = error instanceof Error ? sanitizeDiagnosticMessage(error.message) : sanitizeDiagnosticMessage(String(error));
     doctorCheck("device probe", false, `probe failed: ${message}. Next: run with QMD_FORCE_CPU=1 to bypass GPU probing, or set QMD_LLAMA_GPU=metal|cuda|vulkan and retry`);
     nextSteps.push("GPU probe failed; try `QMD_FORCE_CPU=1 qmd doctor` to confirm CPU fallback, then fix GPU drivers/backend if acceleration is expected.");
+    if (process.platform === "darwin" && process.arch === "arm64") {
+      // arm64 Macs ship only a Metal prebuilt (no CPU-only binary), and sandboxed
+      // environments (e.g. the Claude Code agent shell) block Metal init, so embed
+      // aborts there. It works in a normal terminal — point the user at that.
+      nextSteps.push("On Apple Silicon, Metal GPU init is blocked inside sandboxed shells (e.g. Claude Code), so `qmd embed` aborts there even though `QMD_FORCE_CPU=1` is set (no CPU-only arm64 prebuilt exists). Run `qmd embed` from a normal terminal; embeddings then persist in the index for use from anywhere.");
+    }
   }
 }
 

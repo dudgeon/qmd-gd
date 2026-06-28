@@ -992,13 +992,17 @@ export class LlamaCpp implements LLM {
 
     this.embedContextsCreatePromise = (async () => {
       const model = await this.ensureEmbedModel();
+      // Never exceed the model's trained context (see embedContextSize): a 2048
+      // context on a 512-token bge model aborts at embed time with a native
+      // GGML_ASSERT out-of-bounds on the position-embedding matrix.
+      const contextSize = this.embedContextSize();
       // Embed contexts are ~143 MB each (nomic-embed 2048 ctx)
       const n = await this.computeParallelism(150);
       const threads = await this.threadsPerContext(n);
       for (let i = 0; i < n; i++) {
         try {
           this.embedContexts.push(await model.createEmbeddingContext({
-            contextSize: LlamaCpp.EMBED_CONTEXT_SIZE,
+            contextSize,
             ...(threads > 0 ? { threads } : {}),
           }));
         } catch {
@@ -1075,12 +1079,26 @@ export class LlamaCpp implements LLM {
    * detokenizes back to text if truncation is needed.
    * Returns the (possibly truncated) text and whether truncation occurred.
    */
-  private resolveEmbedTokenLimit(): number {
+  /**
+   * The embedding context window to use, never larger than the model's trained
+   * context size. BERT-family embedding models (e.g. bge-small, 512 tokens) have
+   * a fixed position-embedding matrix; creating a context — or feeding input —
+   * larger than trainContextSize makes llama.cpp index that matrix out of bounds
+   * and abort the whole process with a native
+   * GGML_ASSERT(i01 >= 0 && i01 < ne01) in ggml_compute_forward_get_rows (an
+   * uncatchable abort(), not a JS throw). Context creation and truncation both
+   * derive from this one value so they can never drift apart.
+   */
+  private embedContextSize(): number {
     const trainedContextSize = this.embedModel?.trainContextSize;
     if (typeof trainedContextSize === "number" && Number.isFinite(trainedContextSize) && trainedContextSize > 0) {
       return Math.max(1, Math.min(LlamaCpp.EMBED_CONTEXT_SIZE, trainedContextSize));
     }
     return LlamaCpp.EMBED_CONTEXT_SIZE;
+  }
+
+  private resolveEmbedTokenLimit(): number {
+    return this.embedContextSize();
   }
 
   private async truncateToContextSize(
@@ -1127,6 +1145,18 @@ export class LlamaCpp implements LLM {
   }
 
   /**
+   * Emit at most one truncation warning per embedBatch call. Token-dense
+   * content (code, URLs) makes many chunks exceed the embed limit; warning
+   * once per chunk floods the terminal, so we count and summarize instead.
+   */
+  private warnBatchTruncation(truncatedChunks: number, total: number, limit: number): void {
+    if (truncatedChunks <= 0) return;
+    console.warn(
+      `⚠ ${truncatedChunks} of ${total} chunk${total === 1 ? "" : "s"} truncated to fit the embedding context (${limit} tokens)`
+    );
+  }
+
+  /**
    * Batch embed multiple texts efficiently
    * Uses Promise.all for parallel embedding - node-llama-cpp handles batching internally
    */
@@ -1141,6 +1171,10 @@ export class LlamaCpp implements LLM {
       const contexts = await this.ensureEmbedContexts();
       const n = contexts.length;
 
+      // Tally truncations across the whole call and warn once at the end.
+      let truncatedChunks = 0;
+      let truncationLimit = 0;
+
       if (n === 1) {
         // Single context: sequential (no point splitting)
         const context = contexts[0]!;
@@ -1148,9 +1182,7 @@ export class LlamaCpp implements LLM {
         for (const text of texts) {
           try {
             const { text: safeText, truncated, limit } = await this.truncateToContextSize(text);
-            if (truncated) {
-              console.warn(`⚠ Batch text truncated to fit embedding context (${limit} tokens)`);
-            }
+            if (truncated) { truncatedChunks++; truncationLimit = limit; }
             const embedding = await context.getEmbeddingFor(safeText);
             this.touchActivity();
             embeddings.push({ embedding: Array.from(embedding.vector), model: options.model ?? this.embedModelUri });
@@ -1159,6 +1191,7 @@ export class LlamaCpp implements LLM {
             embeddings.push(null);
           }
         }
+        this.warnBatchTruncation(truncatedChunks, texts.length, truncationLimit);
         return embeddings;
       }
 
@@ -1172,13 +1205,13 @@ export class LlamaCpp implements LLM {
         chunks.map(async (chunk, i) => {
           const ctx = contexts[i]!;
           const results: (EmbeddingResult | null)[] = [];
+          let truncated = 0;
+          let limit = 0;
           for (const text of chunk) {
             try {
-              const { text: safeText, truncated, limit } = await this.truncateToContextSize(text);
-              if (truncated) {
-                console.warn(`⚠ Batch text truncated to fit embedding context (${limit} tokens)`);
-              }
-              const embedding = await ctx.getEmbeddingFor(safeText);
+              const safe = await this.truncateToContextSize(text);
+              if (safe.truncated) { truncated++; limit = safe.limit; }
+              const embedding = await ctx.getEmbeddingFor(safe.text);
               this.touchActivity();
               results.push({ embedding: Array.from(embedding.vector), model: options.model ?? this.embedModelUri });
             } catch (err) {
@@ -1186,11 +1219,16 @@ export class LlamaCpp implements LLM {
               results.push(null);
             }
           }
-          return results;
+          return { results, truncated, limit };
         })
       );
 
-      return chunkResults.flat();
+      for (const r of chunkResults) {
+        truncatedChunks += r.truncated;
+        if (r.limit > 0) truncationLimit = r.limit;
+      }
+      this.warnBatchTruncation(truncatedChunks, texts.length, truncationLimit);
+      return chunkResults.flatMap((r) => r.results);
     } catch (error) {
       console.error("Batch embedding error:", error);
       return texts.map(() => null);

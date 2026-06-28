@@ -13,16 +13,17 @@ the bundled skills (`qmd`, `qmd-setup`, `ask-qmd`) and the `qmd-retrieve` subage
 
 When the user asks to **get set up / install qmd / "/setup" / "help me get started"**, read
 and follow [`.claude/skills/qmd-setup/SKILL.md`](.claude/skills/qmd-setup/SKILL.md) step by
-step. Two hard rules from that skill that you MUST honor:
+step. The rule that decides who runs each command:
 
-- **Never run state-mutating commands for the user** (`npm install`, `qmd skill install`,
-  `qmd collection add`, `qmd update`, `qmd embed`, `qmd pull`). Print them for the user to run.
-- **Never contact an external network domain.** In locked-down environments you may reach
-  only an allowlisted set of domains; the user runs anything that hits the npm registry or
-  prebuilt hosts (including the preflight script) from their own terminal.
-
-The only setup helper you may run yourself is the local, network-free probe
-`.claude/skills/qmd-setup/scripts/qmd-setup-context.sh`.
+- **Run every local `qmd` CLI command yourself** — `qmd collection add`, `qmd update`,
+  `qmd embed`, `qmd skill install`, `qmd collection include/exclude`, `qmd context add`,
+  `qmd doctor`/`status`/`search`. They're on-device, network-free, and idempotent; driving
+  them for the user is the point of the skill. Ask for the input you need (which folders, what
+  scope), then run the command — don't make the user paste it.
+- **Hand off to the user only commands that install npm packages or reach the network** —
+  `npm install` / `bash scripts/install.sh`, the preflight script (and any `curl` reachability
+  check), `qmd pull` for an `hf:` model, and corporate npm-registry / CA config. Your sandbox
+  can't reach the npm registry or external hosts; the user runs those from their own terminal.
 
 ## Commands
 
@@ -173,12 +174,20 @@ npx vitest run --reporter=verbose test/
 - Reciprocal Rank Fusion (RRF) for combining results
 - Chunking is regex/markdown-only: 480 tokens/chunk with 15% overlap (sized to fit bge-small's 512-token context), prefers markdown headings as boundaries. There is no AST/code-aware chunking.
 
-## Important: Do NOT run automatically
+## Running qmd state-mutating commands
 
-- Never run `qmd collection add`, `qmd embed`, or `qmd update` automatically
-- Never modify the SQLite database directly
-- Write out example commands for the user to run manually
-- Index is stored at `~/.cache/qmd/index.sqlite`
+- **When the user explicitly asks** (a `/qmd-setup` run, or "add/index/embed this folder"),
+  run `qmd collection add`, `qmd update`, `qmd embed`, and `qmd collection include/exclude`
+  yourself — confirm *which* folder first, then run it. These are local and network-free.
+  See [`.claude/skills/qmd-setup/SKILL.md`](.claude/skills/qmd-setup/SKILL.md) for the full
+  flow and the npm/network commands that still go to the user.
+- **Do not run them unprompted** as a side-effect of unrelated work, and never index a large
+  corpus the user didn't ask for.
+- **On Apple Silicon, `qmd embed` cannot run inside the Claude Code sandbox** — the only arm64
+  prebuilt is Metal/GPU and the sandbox blocks Metal init (`ggml_metal_init` fails), so embed
+  aborts. Hand `qmd embed` to the user to run in a normal terminal; `qmd update` and `qmd search`
+  are unaffected (pure SQLite, no GPU).
+- Never modify the SQLite database directly. The index is stored at `~/.cache/qmd/index.sqlite`.
 
 ## Do NOT compile
 
