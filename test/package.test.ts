@@ -67,12 +67,23 @@ describe("published package files", () => {
   });
 
   test("install.sh + preflight are valid bash, executable, and carry the proxy/TLS guards", () => {
-    for (const rel of ["scripts/install.sh", ".claude/skills/qmd-setup/scripts/preflight-deps.sh"]) {
+    for (const rel of [
+      "scripts/install.sh",
+      ".claude/skills/qmd-setup/scripts/preflight-deps.sh",
+      ".claude/skills/qmd-setup/scripts/qmd-setup-context.sh",
+    ]) {
       const path = fileURLToPath(new URL(rel, root));
       // `bash -n` parses without executing — throws on a syntax error.
       expect(() => execFileSync("bash", ["-n", path]), `${rel} should parse`).not.toThrow();
       expect(statSync(path).mode & 0o111, `${rel} should be executable`).not.toBe(0);
     }
+
+    // The step-0 probe must be git-free (works from an unzipped download, not just a clone)
+    // and vendor-aware (no stale embeddinggemma/HF-download language).
+    const probe = readFileSync(new URL(".claude/skills/qmd-setup/scripts/qmd-setup-context.sh", root), "utf8");
+    expect(probe).not.toContain("rev-parse");            // no git dependency for locating the folder
+    expect(probe).not.toContain("embeddinggemma");        // default model is now vendored bge
+    expect(probe).toContain("models/bge-small-en-v1.5-Q8_0.gguf");
 
     const install = readFileSync(new URL("scripts/install.sh", root), "utf8");
     expect(install).toContain("NODE_EXTRA_CA_CERTS");

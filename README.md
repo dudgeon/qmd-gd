@@ -487,15 +487,31 @@ Supported model families:
 
 ## Installation
 
-qmd-gd is a private fork installed from the checkout (not published to npm). It runs on
-**Node (>=20)**.
+qmd-gd is a private fork (not published to npm). It runs on **Node (>=20)**, and the
+embedding model is **vendored in the repo**, so setup needs no HuggingFace access.
+
+**1. Get the code** — download the ZIP from GitHub and unzip it (no `git` required), or clone:
 
 ```sh
-git clone https://github.com/dudgeon/qmd-gd
-cd qmd-gd
+git clone https://github.com/dudgeon/qmd-gd && cd qmd-gd
+# …or download the ZIP, unzip, and `cd` into the folder
+```
+
+**2. Set it up** — open the folder in Claude Code and ask it to *"set up qmd"* (the bundled
+`qmd-setup` skill walks you through it), or run the one-shot installer yourself:
+
+```sh
+bash scripts/install.sh                                    # build + link + install skills
+QMD_CA_BUNDLE=/path/to/corp-ca.pem bash scripts/install.sh # behind a TLS-intercepting proxy
+```
+
+Equivalent manual steps:
+
+```sh
 npm install      # builds native deps (better-sqlite3, sqlite-vec, node-llama-cpp) for your Node
 npm run build    # compiles dist/ via tsc
 npm link         # or: npm i -g .
+qmd skill install --global --yes
 ```
 
 After a Node major-version upgrade, run `npm rebuild` so the native modules match the new ABI.
