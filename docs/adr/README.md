@@ -18,3 +18,4 @@ Each ADR uses: **Status · Context · Decision · Alternatives considered · Con
 | [0005](0005-skills-not-a-plugin.md) | Ship as plain skills (`.claude/skills/`), not a Claude Code plugin | Accepted |
 | [0006](0006-remove-vestigial-generative-surface.md) | Delete removed-capability surface instead of quarantining it as no-ops | Accepted |
 | [0007](0007-retrieve-rank-subagent.md) | Delegate the retrieve-and-rank loop to a Sonnet Task subagent | Accepted |
+| [0008](0008-stay-on-llama-cpp-metal-cpu-fallback.md) | Stay on llama.cpp; fall back to CPU when Metal can't run (macOS 26) | Accepted |

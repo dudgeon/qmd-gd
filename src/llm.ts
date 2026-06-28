@@ -36,6 +36,7 @@ export function setNodeLlamaCppModuleForTest(module: NodeLlamaCppModule | null):
   failedGpuInitModes.clear();
   noGpuAccelerationWarningShown = false;
   cpuForcedPrebuiltFallbackWarningShown = false;
+  gpuContextFallbackWarningShown = false;
 }
 
 type StdoutWrite = typeof process.stdout.write;
@@ -621,6 +622,7 @@ async function disposeWithTimeout(resourceName: string, dispose: () => Promise<v
 const failedGpuInitModes = new Set<LlamaGpuMode>();
 let noGpuAccelerationWarningShown = false;
 let cpuForcedPrebuiltFallbackWarningShown = false;
+let gpuContextFallbackWarningShown = false;
 
 function isCpuModeRequested(): boolean {
   return resolveLlamaGpuMode() === false;
@@ -650,6 +652,12 @@ export class LlamaCpp implements LLM {
 
   // Track disposal state to prevent double-dispose
   private disposed = false;
+
+  // Set once a GPU runtime loaded but could not create an embedding context
+  // (e.g. macOS 26 Metal "failed to create command queue", or GPU work denied
+  // to a background/spawned process). Forces the CPU path for the rest of this
+  // instance's life so embedding still succeeds. See forceCpuContextFallback().
+  private gpuContextFallbackForced = false;
 
 
   constructor(config: LlamaCppConfig = {}) {
@@ -866,7 +874,7 @@ export class LlamaCpp implements LLM {
   }
 
   private isCpuOffloadForced(): boolean {
-    return isCpuModeRequested();
+    return isCpuModeRequested() || this.gpuContextFallbackForced;
   }
 
   private modelLoadOptions(modelPath: string): { modelPath: string; gpuLayers?: number } {
@@ -980,6 +988,49 @@ export class LlamaCpp implements LLM {
    */
   private embedContextsCreatePromise: Promise<LlamaEmbeddingContext[]> | null = null;
 
+  /**
+   * A GPU runtime loaded, but creating an embedding context failed (no context
+   * could be created). On macOS 26 this surfaces as libggml-metal's
+   * "ggml_metal_init: failed to create command queue" — `[device newCommandQueue]`
+   * returns nil — and the same shape appears when the OS denies GPU work to a
+   * background/headless process (a shell spawned by an app rather than launched
+   * from Terminal). The Metal *device* probes fine, so getLlama() does not throw
+   * and the existing runtime-level CPU fallback never triggers; the failure only
+   * appears here, at context creation.
+   *
+   * Recover instead of hard-failing: drop the GPU model + runtime, force the CPU
+   * path for the rest of this instance, and let the caller reload + retry on CPU.
+   * Embedding bge-small (35 MB) on CPU is fast, so this is a graceful degrade,
+   * not a loss of function. Cached in `failedGpuInitModes` so any later runtime
+   * load in this process also skips the GPU rather than repeating the probe.
+   */
+  private async forceCpuContextFallback(err: unknown): Promise<void> {
+    this.gpuContextFallbackForced = true;
+    const gpuMode = resolveLlamaGpuMode();
+    if (gpuMode !== false) failedGpuInitModes.add(gpuMode);
+
+    if (!gpuContextFallbackWarningShown) {
+      gpuContextFallbackWarningShown = true;
+      process.stderr.write(
+        `QMD Warning: GPU embedding context creation failed (${err instanceof Error ? err.message : String(err)}); ` +
+        `falling back to CPU. On macOS 26 this is the Metal "failed to create command queue" issue, ` +
+        `or GPU access denied to a background process. Run 'qmd doctor' for device diagnostics.\n`
+      );
+    }
+
+    // Tear down the GPU model + runtime so the retry rebuilds them on CPU.
+    if (this.embedModel) {
+      await disposeWithTimeout("embedding model (GPU)", () => this.embedModel!.dispose());
+      this.embedModel = null;
+    }
+    if (this.llama) {
+      await disposeWithTimeout("llama runtime (GPU)", () => this.llama!.dispose());
+      this.llama = null;
+    }
+    this.embedModelLoadPromise = null;
+    this.llamaLoadPromise = null;
+  }
+
   private async ensureEmbedContexts(): Promise<LlamaEmbeddingContext[]> {
     if (this.embedContexts.length > 0) {
       this.touchActivity();
@@ -991,20 +1042,35 @@ export class LlamaCpp implements LLM {
     }
 
     this.embedContextsCreatePromise = (async () => {
-      const model = await this.ensureEmbedModel();
-      // Embed contexts are ~143 MB each (nomic-embed 2048 ctx)
-      const n = await this.computeParallelism(150);
-      const threads = await this.threadsPerContext(n);
-      for (let i = 0; i < n; i++) {
-        try {
-          this.embedContexts.push(await model.createEmbeddingContext({
-            contextSize: LlamaCpp.EMBED_CONTEXT_SIZE,
-            ...(threads > 0 ? { threads } : {}),
-          }));
-        } catch {
-          if (this.embedContexts.length === 0) throw new Error("Failed to create any embedding context");
-          break;
+      // Retry once on CPU if a GPU runtime cannot create any embedding context.
+      for (let attempt = 0; ; attempt++) {
+        const model = await this.ensureEmbedModel();
+        // Embed contexts are ~143 MB each (nomic-embed 2048 ctx)
+        const n = await this.computeParallelism(150);
+        const threads = await this.threadsPerContext(n);
+        let lastErr: unknown;
+        for (let i = 0; i < n; i++) {
+          try {
+            this.embedContexts.push(await model.createEmbeddingContext({
+              contextSize: LlamaCpp.EMBED_CONTEXT_SIZE,
+              ...(threads > 0 ? { threads } : {}),
+            }));
+          } catch (err) {
+            lastErr = err;
+            break;
+          }
         }
+        if (this.embedContexts.length > 0) break;
+
+        // No context created. If we were on a GPU runtime, this is the macOS 26
+        // Metal command-queue / background-GPU failure mode — fall back to CPU
+        // and retry once. Otherwise (already on CPU, or CPU also failed) give up.
+        const llama = await this.ensureLlama();
+        if (attempt === 0 && !this.isCpuOffloadForced() && llama.gpu) {
+          await this.forceCpuContextFallback(lastErr);
+          continue;
+        }
+        throw new Error("Failed to create any embedding context");
       }
       this.touchActivity();
       return this.embedContexts;

@@ -416,6 +416,82 @@ describe("native llama stdout containment", () => {
       else process.env.QMD_FORCE_CPU = prevForceCpu;
     }
   });
+
+  test("falls back to CPU when GPU embedding context creation fails (macOS 26 Metal command queue)", async () => {
+    const prevGpu = process.env.QMD_LLAMA_GPU;
+    const prevForceCpu = process.env.QMD_FORCE_CPU;
+    delete process.env.QMD_LLAMA_GPU;
+    delete process.env.QMD_FORCE_CPU;
+
+    const getEmbeddingFor = vi.fn(async (text: string) => ({
+      vector: new Float32Array([0.4, 0.5, 0.6]),
+      text,
+    }));
+
+    // A GPU (metal) model cannot create an embedding context — this is the
+    // macOS 26 "ggml_metal_init: failed to create command queue" failure mode.
+    // The CPU model creates contexts fine.
+    const makeModel = (gpu: string | false) => ({
+      trainContextSize: 2048,
+      tokenize: (text: string) => Array.from(text),
+      detokenize: (tokens: string[]) => tokens.join(""),
+      createEmbeddingContext: vi.fn(async () => {
+        if (gpu !== false) {
+          throw new Error("ggml_metal_init: failed to create command queue");
+        }
+        return { getEmbeddingFor, dispose: vi.fn(async () => {}) };
+      }),
+      dispose: vi.fn(async () => {}),
+    });
+
+    const gpuCalls: unknown[] = [];
+    const getLlama = vi.fn(async (options: Record<string, unknown>) => {
+      gpuCalls.push(options.gpu);
+      const gpu = options.gpu === false ? false : "metal";
+      return {
+        gpu,
+        cpuMathCores: 4,
+        supportsGpuOffloading: gpu !== false,
+        loadModel: vi.fn(async () => makeModel(gpu)),
+        getVramState: vi.fn(async () => ({ total: 1e9, used: 0, free: 6e8 })),
+        getGpuDeviceNames: vi.fn(async () => ["Apple GPU"]),
+        dispose: vi.fn(async () => {}),
+      } as any;
+    });
+
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile: vi.fn(async () => "/tmp/nonexistent-model.gguf"),
+      LlamaChatSession: vi.fn() as any,
+      getLlama,
+    });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const llm = new LlamaCpp();
+    try {
+      const result = await llm.embed("hello world");
+      expect(result?.embedding).toEqual([
+        0.4000000059604645,
+        0.5,
+        0.6000000238418579,
+      ]);
+      // First load probed the GPU (auto); after the context failure it retried on CPU.
+      expect(gpuCalls).toContain("auto");
+      expect(gpuCalls).toContain(false);
+      expect(getEmbeddingFor).toHaveBeenCalledWith("hello world");
+      const stderr = String(stderrSpy.mock.calls.map((c) => c[0]).join(""));
+      expect(stderr).toContain("GPU embedding context creation failed");
+      expect(stderr).toContain("command queue");
+    } finally {
+      await llm.dispose();
+      stderrSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      if (prevGpu === undefined) delete process.env.QMD_LLAMA_GPU;
+      else process.env.QMD_LLAMA_GPU = prevGpu;
+      if (prevForceCpu === undefined) delete process.env.QMD_FORCE_CPU;
+      else process.env.QMD_FORCE_CPU = prevForceCpu;
+    }
+  });
 });
 
 describe("LLM context parallelism safety", () => {
@@ -568,8 +644,8 @@ describe.skipIf(!!process.env.CI)("LlamaCpp Integration", () => {
       expect(result).not.toBeNull();
       expect(result!.embedding).toBeInstanceOf(Array);
       expect(result!.embedding.length).toBeGreaterThan(0);
-      // embeddinggemma outputs 768 dimensions
-      expect(result!.embedding.length).toBe(768);
+      // bge-small-en-v1.5 (the bundled default) outputs 384 dimensions
+      expect(result!.embedding.length).toBe(384);
     });
 
     test("returns consistent embeddings for same input", async () => {
@@ -617,7 +693,7 @@ describe.skipIf(!!process.env.CI)("LlamaCpp Integration", () => {
       expect(results).toHaveLength(3);
       for (const result of results) {
         expect(result).not.toBeNull();
-        expect(result!.embedding.length).toBe(768);
+        expect(result!.embedding.length).toBe(384);
       }
     });
 
@@ -741,7 +817,7 @@ describe.skipIf(!!process.env.CI)("LLM Session Management", () => {
         expect(session.isValid).toBe(true);
         const embedding = await session.embed("test text");
         expect(embedding).not.toBeNull();
-        expect(embedding!.embedding.length).toBe(768);
+        expect(embedding!.embedding.length).toBe(384);
         return "success";
       });
       expect(result).toBe("success");
@@ -803,7 +879,7 @@ describe.skipIf(!!process.env.CI)("LLM Session Management", () => {
         expect(results).toHaveLength(3);
         for (const result of results) {
           expect(result).not.toBeNull();
-          expect(result!.embedding.length).toBe(768);
+          expect(result!.embedding.length).toBe(384);
         }
       });
     });

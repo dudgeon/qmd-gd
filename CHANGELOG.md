@@ -11,6 +11,20 @@ Claude and never runs `claude -p`. See `docs/adr/` for the decisions behind this
 
 ### Changes
 
+- **`qmd embed` now survives a Metal GPU that loads but can't run (macOS 26 / background-GPU).**
+  On macOS 26 (Tahoe), libggml-metal's device probe succeeds but creating a compute context
+  fails with `ggml_metal_init: failed to create command queue` (`[device newCommandQueue]`
+  returns nil); the same shape appears when the OS denies GPU work to a background/spawned
+  shell (e.g. one launched by a desktop app rather than from Terminal). Because the *device*
+  probes fine, `getLlama()` doesn't throw, so the existing runtime-level CPU fallback never
+  triggered — embedding hard-failed with "Failed to create any embedding context." Now, when a
+  GPU runtime cannot create *any* embedding context, qmd disposes the GPU runtime, forces the
+  CPU path, and retries once on CPU (warning once on stderr). Embedding bge-small (35 MB, the
+  bundled default) on CPU is fast, so this is a graceful degrade, not a loss of function. The
+  `QMD_FORCE_CPU=1` / `QMD_LLAMA_GPU=false` escape hatches still skip the GPU up front.
+  **We are staying on `node-llama-cpp` for embeddings — not migrating off llama.cpp** (see
+  `docs/adr/0008`): GPU is non-essential for this tiny-model workload, and 3.18.1 is already
+  the latest. (`src/llm.ts`)
 - **SQLite engine is now Node's built-in `node:sqlite` — no native module, no compile, no ABI rebuild.**
   Dropped the native `better-sqlite3` dependency, which had no prebuilt for Node 20 and so
   source-compiled SQLite (the multi-minute, "is it hung?" install) and broke with a
